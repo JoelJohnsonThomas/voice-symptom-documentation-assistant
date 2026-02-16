@@ -46,3 +46,71 @@ Important extraction rules:
 - Use "not specified" for fields without explicit information
 - Use plain English, no markdown formatting."""
 
+
+def create_soap_oap_prompt(transcript: str, subjective_data: dict) -> str:
+    """
+    Create a prompt for generating Objective, Assessment, and Plan SOAP sections.
+    
+    Uses already-extracted Subjective data as context to generate the remaining
+    three SOAP sections. These are SUGGESTIONS for clinician review.
+    
+    Args:
+        transcript: Original patient statement
+        subjective_data: Dict with chief_complaint, symptom_details, soap_note_subjective
+        
+    Returns:
+        Formatted prompt string for O/A/P generation
+    """
+    chief_complaint = subjective_data.get("chief_complaint", "not specified")
+    soap_subjective = subjective_data.get("soap_note_subjective", "")
+    
+    symptom_details = subjective_data.get("symptom_details", {})
+    symptoms = symptom_details.get("symptoms_mentioned", ["not specified"])
+    symptoms_str = ", ".join(symptoms) if isinstance(symptoms, list) else str(symptoms)
+    duration = symptom_details.get("duration", "not specified")
+    onset = symptom_details.get("onset", "not specified")
+    location = symptom_details.get("location", "not specified")
+    severity = symptom_details.get("severity_description", "not specified")
+    
+    return f"""You are generating SOAP note sections for CLINICIAN REVIEW.
+
+COMPLIANCE: These are ADMINISTRATIVE SUGGESTIONS only. All clinical decisions
+must be made by a qualified healthcare professional. Do NOT make definitive
+diagnoses or prescribe specific treatments.
+
+Patient Information:
+- Chief Complaint: {chief_complaint}
+- Symptoms: {symptoms_str}
+- Duration: {duration}
+- Onset: {onset}
+- Location: {location}
+- Severity: {severity}
+
+Subjective (already documented):
+{soap_subjective}
+
+Generate the remaining three SOAP sections. Write each section as a concise,
+clinical-style paragraph. Use plain English, no markdown formatting, no bullet
+points, no numbered lists.
+
+OBJECTIVE:
+Write what a clinician should assess during physical examination. Include
+relevant vital signs to check and focused exam findings to look for based
+on the presenting symptoms. Use phrases like "recommend assessing" or
+"examination should include" since this is a pre-visit suggestion.
+
+ASSESSMENT:
+List 2-3 differential diagnoses to consider, ranked by likelihood based on
+the symptom presentation. Use cautious language like "consider", "rule out",
+"differential includes". Do NOT make a definitive diagnosis.
+
+PLAN:
+Suggest reasonable next steps for the clinician to consider. Include relevant
+laboratory tests, imaging, or referrals that may be appropriate. Use language
+like "consider ordering", "may benefit from", "recommend discussing with patient".
+Do NOT prescribe specific medications or dosages.
+
+Format your response exactly as:
+OBJECTIVE: [your objective paragraph]
+ASSESSMENT: [your assessment paragraph]
+PLAN: [your plan paragraph]"""

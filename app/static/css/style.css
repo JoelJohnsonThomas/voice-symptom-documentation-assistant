@@ -1752,3 +1752,250 @@ body.theme-midnight .voice-card-glow {
     opacity: 0.3;
     background: #ffffff;
 }
+
+/* =====================================================
+   SOAP SECTION CARDS
+   ===================================================== */
+
+.soap-sections-container {
+    margin-top: 8px;
+}
+
+.soap-sections-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    padding: 0 4px;
+}
+
+.soap-sections-header h4 {
+    font-size: 1rem;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.soap-section-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    margin-bottom: 10px;
+    overflow: hidden;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.soap-section-card:hover {
+    border-color: var(--violet-500);
+    box-shadow: 0 0 12px rgba(139, 92, 246, 0.08);
+}
+
+.soap-section-card.approved {
+    border-color: #10b981;
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.12);
+}
+
+.soap-section-card.editing {
+    border-color: #3b82f6;
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.15);
+}
+
+/* Card Header */
+.soap-card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border-color);
+    background: rgba(0, 0, 0, 0.1);
+}
+
+.soap-card-header h5 {
+    margin: 0;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    flex: 1;
+}
+
+/* SOAP Letter Labels */
+.soap-label {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 0.82rem;
+    flex-shrink: 0;
+    letter-spacing: 0;
+}
+
+.soap-label-s {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.soap-label-o {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.soap-label-a {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.soap-label-p {
+    background: rgba(139, 92, 246, 0.15);
+    color: #a78bfa;
+    border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+/* Status Badges */
+.soap-status {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+
+.soap-status.badge.warning {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.soap-status.badge.success {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.soap-status.badge.info {
+    background: rgba(59, 130, 246, 0.15);
+    color: #3b82f6;
+    border: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+/* Card Body (editable content) */
+.soap-card-body {
+    padding: 12px 14px;
+    font-size: 0.88rem;
+    line-height: 1.6;
+    color: var(--text-primary);
+    min-height: 36px;
+    transition: background 0.2s ease, outline 0.2s ease;
+    outline: 2px solid transparent;
+    border-radius: 0;
+}
+
+.soap-card-body[contenteditable="true"] {
+    background: rgba(59, 130, 246, 0.05);
+    outline: 2px solid rgba(59, 130, 246, 0.3);
+    cursor: text;
+}
+
+.soap-card-body:empty::before {
+    content: "Pending...";
+    color: var(--text-muted);
+    opacity: 0.6;
+}
+
+/* Card Actions */
+.soap-card-actions {
+    display: flex;
+    gap: 6px;
+    padding: 8px 14px;
+    border-top: 1px solid var(--border-color);
+    background: rgba(0, 0, 0, 0.05);
+}
+
+.soap-edit-btn,
+.soap-approve-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.soap-edit-btn:hover {
+    background: rgba(59, 130, 246, 0.1);
+    color: #60a5fa;
+    border-color: rgba(59, 130, 246, 0.3);
+}
+
+.soap-approve-btn:hover {
+    background: rgba(16, 185, 129, 0.1);
+    color: #34d399;
+    border-color: rgba(16, 185, 129, 0.3);
+}
+
+.soap-edit-btn.saving {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+    border-color: #3b82f6;
+}
+
+.soap-approve-btn.approved {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    border-color: #10b981;
+    pointer-events: none;
+}
+
+.soap-approve-btn:disabled,
+.soap-edit-btn:disabled {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+/* AI Suggestion Notice */
+.soap-ai-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 14px;
+    margin-top: 8px;
+    border-radius: 8px;
+    background: rgba(245, 158, 11, 0.06);
+    border: 1px solid rgba(245, 158, 11, 0.15);
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    line-height: 1.5;
+}
+
+.soap-ai-notice svg {
+    color: #f59e0b;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+/* Approval Flash Animation */
+@keyframes approvalFlash {
+    0% {
+        background: rgba(16, 185, 129, 0.2);
+    }
+
+    100% {
+        background: transparent;
+    }
+}
+
+.soap-section-card.just-approved {
+    animation: approvalFlash 0.8s ease-out;
+}

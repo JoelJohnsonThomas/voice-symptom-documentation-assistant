@@ -366,10 +366,147 @@
                                     <div id="symptomDetails" class="symptom-details"></div>
                                 </div>
 
-                                <!-- SOAP Note -->
-                                <div class="result-section">
-                                    <h4>SOAP Note — Subjective</h4>
-                                    <div id="soapNote" class="soap-note"></div>
+                                <!-- SOAP Notes — Full (S, O, A, P) -->
+                                <div class="soap-sections-container">
+                                    <div class="soap-sections-header">
+                                        <h4>SOAP Note</h4>
+                                        <span class="badge info" id="soapOverallStatus">4 sections pending review</span>
+                                    </div>
+
+                                    <!-- Subjective -->
+                                    <div class="soap-section-card" data-section="subjective">
+                                        <div class="soap-card-header">
+                                            <span class="soap-label soap-label-s">S</span>
+                                            <h5>Subjective</h5>
+                                            <span class="soap-status badge warning" id="soapStatusS">Pending
+                                                Review</span>
+                                        </div>
+                                        <div class="soap-card-body" id="soapS" contenteditable="false"></div>
+                                        <div class="soap-card-actions">
+                                            <button class="soap-edit-btn" data-section="subjective"
+                                                title="Edit this section">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" width="14" height="14">
+                                                    <path
+                                                        d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                                </svg>
+                                                <span>Edit</span>
+                                            </button>
+                                            <button class="soap-approve-btn" data-section="subjective"
+                                                title="Approve this section">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" width="14" height="14">
+                                                    <polyline points="20 6 9 17 4 12" />
+                                                </svg>
+                                                <span>Approve</span>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <!-- Objective -->
+                                    <div class="soap-section-card" data-section="objective">
+                                        <div class="soap-card-header">
+                                            <span class="soap-label soap-label-o">O</span>
+                                            <h5>Objective</h5>
+                                            <span class="soap-status badge warning" id="soapStatusO">Pending
+                                                Review</span>
+                                        </div>
+                                        <div class="soap-card-body" id="soapO" contenteditable="false"></div>
+                                        <div class="soap-card-actions">
+                                            <button class="soap-edit-btn" data-section="objective"
+                                                title="Edit this section">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" width="14" height="14">
+                                                    <path
+                                                        d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                                </svg>
+                                                <span>Edit</span>
+                                            </button>
+                                            <button class="soap-approve-btn" data-section="objective"
+                                                title="Approve this section">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" width="14" height="14">
+                                                    <polyline points="20 6 9 17 4 12" />
+                                                </svg>
+                                                <span>Approve</span>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <!-- Assessment -->
+                                    <div class="soap-section-card" data-section="assessment">
+                                        <div class="soap-card-header">
+                                            <span class="soap-label soap-label-a">A</span>
+                                            <h5>Assessment</h5>
+                                            <span class="soap-status badge warning" id="soapStatusA">Pending
+                                                Review</span>
+                                        </div>
+                                        <div class="soap-card-body" id="soapA" contenteditable="false"></div>
+                                        <div class="soap-card-actions">
+                                            <button class="soap-edit-btn" data-section="assessment"
+                                                title="Edit this section">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" width="14" height="14">
+                                                    <path
+                                                        d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                                </svg>
+                                                <span>Edit</span>
+                                            </button>
+                                            <button class="soap-approve-btn" data-section="assessment"
+                                                title="Approve this section">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" width="14" height="14">
+                                                    <polyline points="20 6 9 17 4 12" />
+                                                </svg>
+                                                <span>Approve</span>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <!-- Plan -->
+                                    <div class="soap-section-card" data-section="plan">
+                                        <div class="soap-card-header">
+                                            <span class="soap-label soap-label-p">P</span>
+                                            <h5>Plan</h5>
+                                            <span class="soap-status badge warning" id="soapStatusP">Pending
+                                                Review</span>
+                                        </div>
+                                        <div class="soap-card-body" id="soapP" contenteditable="false"></div>
+                                        <div class="soap-card-actions">
+                                            <button class="soap-edit-btn" data-section="plan" title="Edit this section">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" width="14" height="14">
+                                                    <path
+                                                        d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                                </svg>
+                                                <span>Edit</span>
+                                            </button>
+                                            <button class="soap-approve-btn" data-section="plan"
+                                                title="Approve this section">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" width="14" height="14">
+                                                    <polyline points="20 6 9 17 4 12" />
+                                                </svg>
+                                                <span>Approve</span>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <!-- AI Suggestion Notice -->
+                                    <div class="soap-ai-notice">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                            width="16" height="16">
+                                            <circle cx="12" cy="12" r="10" />
+                                            <line x1="12" y1="16" x2="12" y2="12" />
+                                            <line x1="12" y1="8" x2="12.01" y2="8" />
+                                        </svg>
+                                        <span>O, A, P sections are AI-generated suggestions. Clinician review and
+                                            approval is required.</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>

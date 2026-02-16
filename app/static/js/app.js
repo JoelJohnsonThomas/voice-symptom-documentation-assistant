@@ -50,10 +50,20 @@ const elements = {
     transcriptionText: document.getElementById('transcriptionText'),
     chiefComplaint: document.getElementById('chiefComplaint'),
     symptomDetails: document.getElementById('symptomDetails'),
-    soapNote: document.getElementById('soapNote'),
     audioPlaybackSection: document.getElementById('audioPlaybackSection'),
     resultAudioPlayer: document.getElementById('resultAudioPlayer'),
     textInputIndicator: document.getElementById('textInputIndicator'),
+
+    // SOAP Section Cards
+    soapS: document.getElementById('soapS'),
+    soapO: document.getElementById('soapO'),
+    soapA: document.getElementById('soapA'),
+    soapP: document.getElementById('soapP'),
+    soapStatusS: document.getElementById('soapStatusS'),
+    soapStatusO: document.getElementById('soapStatusO'),
+    soapStatusA: document.getElementById('soapStatusA'),
+    soapStatusP: document.getElementById('soapStatusP'),
+    soapOverallStatus: document.getElementById('soapOverallStatus'),
 
     // Actions
     copyBtn: document.getElementById('copyBtn'),
@@ -77,7 +87,15 @@ const state = {
     websocket: null,
     liveTranscript: '',
     wsConnected: false,
-    streamingMode: true  // true = use WebSocket streaming, false = fallback to upload
+    streamingMode: true,  // true = use WebSocket streaming, false = fallback to upload
+
+    // SOAP section approval state
+    soapApprovals: {
+        subjective: { status: 'pending', edited: false },
+        objective: { status: 'pending', edited: false },
+        assessment: { status: 'pending', edited: false },
+        plan: { status: 'pending', edited: false }
+    }
 };
 
 // =====================================================
@@ -392,6 +410,7 @@ function init() {
     setupTextInput();
     setupSubmit();
     setupActions();
+    setupSOAPActions();
     setupSettings();
 }
 
@@ -788,10 +807,28 @@ function displayResults(data) {
         `;
     }
 
-    // SOAP Note - Backend uses soap_note_subjective
-    if (elements.soapNote) {
-        elements.soapNote.textContent = doc.soap_note_subjective || 'Patient describes symptoms.';
+    // SOAP Notes — populate all 4 sections
+    const soapMap = {
+        soapS: doc.soap_note_subjective || 'Patient describes symptoms.',
+        soapO: doc.soap_note_objective || 'Pending clinician assessment.',
+        soapA: doc.soap_note_assessment || 'Pending clinician assessment.',
+        soapP: doc.soap_note_plan || 'Pending clinician assessment.'
+    };
+
+    for (const [id, text] of Object.entries(soapMap)) {
+        if (elements[id]) {
+            elements[id].textContent = text;
+        }
     }
+
+    // Reset SOAP approval states
+    state.soapApprovals = {
+        subjective: { status: 'pending', edited: false },
+        objective: { status: 'pending', edited: false },
+        assessment: { status: 'pending', edited: false },
+        plan: { status: 'pending', edited: false }
+    };
+    resetSOAPCardStates();
 }
 
 // =====================================================
@@ -806,6 +843,13 @@ async function copyToClipboard() {
     if (!state.currentDocumentation) return;
 
     const doc = state.currentDocumentation.documentation;
+
+    // Get current SOAP text (may have been edited by clinician)
+    const soapS = elements.soapS?.textContent || doc.soap_note_subjective || 'N/A';
+    const soapO = elements.soapO?.textContent || doc.soap_note_objective || 'N/A';
+    const soapA = elements.soapA?.textContent || doc.soap_note_assessment || 'N/A';
+    const soapP = elements.soapP?.textContent || doc.soap_note_plan || 'N/A';
+
     const text = `
 CHIEF COMPLAINT: ${doc.chief_complaint}
 
@@ -815,8 +859,19 @@ SYMPTOM DETAILS:
 - Duration: ${doc.symptom_details?.duration || 'N/A'}
 - Location: ${doc.symptom_details?.location || 'N/A'}
 
-SOAP NOTE (Subjective):
-${doc.soap_note_subjective || 'N/A'}
+SOAP NOTE:
+
+S (Subjective) [${state.soapApprovals.subjective.status}]:
+${soapS}
+
+O (Objective) [${state.soapApprovals.objective.status}]:
+${soapO}
+
+A (Assessment) [${state.soapApprovals.assessment.status}]:
+${soapA}
+
+P (Plan) [${state.soapApprovals.plan.status}]:
+${soapP}
     `.trim();
 
     try {
@@ -844,7 +899,19 @@ ${doc.soap_note_subjective || 'N/A'}
 function exportJSON() {
     if (!state.currentDocumentation) return;
 
-    const dataStr = JSON.stringify(state.currentDocumentation, null, 2);
+    // Enrich export data with approval status and potentially edited content
+    const exportData = JSON.parse(JSON.stringify(state.currentDocumentation));
+    exportData.soap_approvals = state.soapApprovals;
+
+    // Include current (possibly edited) SOAP text
+    if (exportData.documentation) {
+        exportData.documentation.soap_note_subjective = elements.soapS?.textContent || exportData.documentation.soap_note_subjective;
+        exportData.documentation.soap_note_objective = elements.soapO?.textContent || exportData.documentation.soap_note_objective;
+        exportData.documentation.soap_note_assessment = elements.soapA?.textContent || exportData.documentation.soap_note_assessment;
+        exportData.documentation.soap_note_plan = elements.soapP?.textContent || exportData.documentation.soap_note_plan;
+    }
+
+    const dataStr = JSON.stringify(exportData, null, 2);
     const blob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
 
@@ -855,6 +922,181 @@ function exportJSON() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+}
+
+// =====================================================
+// SOAP SECTION EDIT / APPROVE
+// =====================================================
+
+/**
+ * Set up click handlers for all SOAP Edit and Approve buttons.
+ */
+function setupSOAPActions() {
+    document.querySelectorAll('.soap-edit-btn').forEach(btn => {
+        btn.addEventListener('click', () => handleSOAPEdit(btn.dataset.section));
+    });
+    document.querySelectorAll('.soap-approve-btn').forEach(btn => {
+        btn.addEventListener('click', () => handleSOAPApprove(btn.dataset.section));
+    });
+}
+
+/**
+ * Handle Edit button click for a SOAP section.
+ * Toggles contenteditable on the body, changes button text.
+ */
+function handleSOAPEdit(section) {
+    const bodyEl = getSOAPBodyEl(section);
+    const card = bodyEl?.closest('.soap-section-card');
+    const editBtn = card?.querySelector('.soap-edit-btn');
+    const statusBadge = getSOAPStatusEl(section);
+
+    if (!bodyEl || !editBtn) return;
+
+    const isEditing = bodyEl.getAttribute('contenteditable') === 'true';
+
+    if (isEditing) {
+        // Save
+        bodyEl.setAttribute('contenteditable', 'false');
+        card?.classList.remove('editing');
+        editBtn.querySelector('span').textContent = 'Edit';
+        editBtn.classList.remove('saving');
+
+        // Mark as edited
+        state.soapApprovals[section].edited = true;
+        state.soapApprovals[section].status = 'edited';
+
+        if (statusBadge) {
+            statusBadge.textContent = 'Edited';
+            statusBadge.className = 'soap-status badge info';
+        }
+
+        updateSOAPOverallStatus();
+    } else {
+        // Enter edit mode
+        bodyEl.setAttribute('contenteditable', 'true');
+        card?.classList.add('editing');
+        editBtn.querySelector('span').textContent = 'Save';
+        editBtn.classList.add('saving');
+        bodyEl.focus();
+
+        // Un-approve if was approved
+        if (state.soapApprovals[section].status === 'approved') {
+            state.soapApprovals[section].status = 'edited';
+            card?.classList.remove('approved');
+
+            const approveBtn = card?.querySelector('.soap-approve-btn');
+            if (approveBtn) {
+                approveBtn.classList.remove('approved');
+                approveBtn.disabled = false;
+                approveBtn.querySelector('span').textContent = 'Approve';
+            }
+        }
+    }
+}
+
+/**
+ * Handle Approve button click for a SOAP section.
+ * Locks the section and marks it approved.
+ */
+function handleSOAPApprove(section) {
+    const bodyEl = getSOAPBodyEl(section);
+    const card = bodyEl?.closest('.soap-section-card');
+    const approveBtn = card?.querySelector('.soap-approve-btn');
+    const editBtn = card?.querySelector('.soap-edit-btn');
+    const statusBadge = getSOAPStatusEl(section);
+
+    if (!bodyEl || !approveBtn) return;
+
+    // Close edit mode if open
+    bodyEl.setAttribute('contenteditable', 'false');
+    card?.classList.remove('editing');
+    if (editBtn) {
+        editBtn.querySelector('span').textContent = 'Edit';
+        editBtn.classList.remove('saving');
+    }
+
+    // Mark approved
+    state.soapApprovals[section].status = 'approved';
+    card?.classList.add('approved');
+    approveBtn.classList.add('approved');
+    approveBtn.querySelector('span').textContent = 'Approved';
+
+    if (statusBadge) {
+        statusBadge.textContent = '✓ Approved';
+        statusBadge.className = 'soap-status badge success';
+    }
+
+    // Flash animation
+    card?.classList.add('just-approved');
+    setTimeout(() => card?.classList.remove('just-approved'), 900);
+
+    updateSOAPOverallStatus();
+}
+
+/**
+ * Reset all SOAP card states to initial "Pending Review".
+ */
+function resetSOAPCardStates() {
+    ['subjective', 'objective', 'assessment', 'plan'].forEach(section => {
+        const bodyEl = getSOAPBodyEl(section);
+        const card = bodyEl?.closest('.soap-section-card');
+        const statusBadge = getSOAPStatusEl(section);
+        const editBtn = card?.querySelector('.soap-edit-btn');
+        const approveBtn = card?.querySelector('.soap-approve-btn');
+
+        bodyEl?.setAttribute('contenteditable', 'false');
+        card?.classList.remove('editing', 'approved', 'just-approved');
+
+        if (statusBadge) {
+            statusBadge.textContent = 'Pending Review';
+            statusBadge.className = 'soap-status badge warning';
+        }
+
+        if (editBtn) {
+            editBtn.querySelector('span').textContent = 'Edit';
+            editBtn.classList.remove('saving');
+            editBtn.disabled = false;
+        }
+
+        if (approveBtn) {
+            approveBtn.classList.remove('approved');
+            approveBtn.disabled = false;
+            approveBtn.querySelector('span').textContent = 'Approve';
+        }
+    });
+
+    updateSOAPOverallStatus();
+}
+
+/**
+ * Update the overall SOAP status badge.
+ */
+function updateSOAPOverallStatus() {
+    if (!elements.soapOverallStatus) return;
+
+    const sections = Object.values(state.soapApprovals);
+    const approvedCount = sections.filter(s => s.status === 'approved').length;
+    const total = sections.length;
+
+    if (approvedCount === total) {
+        elements.soapOverallStatus.textContent = 'All sections approved ✓';
+        elements.soapOverallStatus.className = 'badge success';
+    } else {
+        elements.soapOverallStatus.textContent = `${total - approvedCount} of ${total} pending review`;
+        elements.soapOverallStatus.className = 'badge info';
+    }
+}
+
+/** Get the body element for a SOAP section. */
+function getSOAPBodyEl(section) {
+    const map = { subjective: 'soapS', objective: 'soapO', assessment: 'soapA', plan: 'soapP' };
+    return elements[map[section]] || null;
+}
+
+/** Get the status badge element for a SOAP section. */
+function getSOAPStatusEl(section) {
+    const map = { subjective: 'soapStatusS', objective: 'soapStatusO', assessment: 'soapStatusA', plan: 'soapStatusP' };
+    return elements[map[section]] || null;
 }
 
 // =====================================================

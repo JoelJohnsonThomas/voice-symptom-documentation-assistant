@@ -468,15 +468,29 @@ class MedGemmaService:
             if not is_valid:
                 logger.warning(f"Documentation validation failed: {error_msg}")
                 # Return safe fallback - just the transcript
-                return {
+                fallback = {
                     "chief_complaint": "not specified",
                     "symptom_details": {"symptoms_mentioned": ["not specified"]},
                     "soap_note_subjective": f"Patient statement: {transcript}",
+                    "soap_note_objective": "Pending clinician assessment.",
+                    "soap_note_assessment": "Pending clinician assessment.",
+                    "soap_note_plan": "Pending clinician assessment.",
                     "validation_failed": True,
                     "validation_error": error_msg,
                     "requires_clinician_review": True,
                     "compliance_notice": "Validation failed. Raw transcript provided for manual review."
                 }
+                return fallback
+            
+            # Generate O, A, P sections using MedGemma
+            try:
+                oap_sections = self.generate_soap_sections(transcript, documentation)
+                documentation.update(oap_sections)
+            except Exception as oap_err:
+                logger.warning(f"O/A/P generation failed, using defaults: {oap_err}")
+                documentation["soap_note_objective"] = "Pending clinician assessment."
+                documentation["soap_note_assessment"] = "Pending clinician assessment."
+                documentation["soap_note_plan"] = "Pending clinician assessment."
             
             # Ensure compliance fields are present
             documentation["requires_clinician_review"] = True
@@ -496,6 +510,113 @@ class MedGemmaService:
         except Exception as e:
             logger.error(f"Documentation generation failed: {e}")
             raise
+    
+    def generate_soap_sections(self, transcript: str, subjective_data: dict) -> dict:
+        """
+        Generate Objective, Assessment, and Plan SOAP sections.
+        
+        Uses already-validated Subjective data as context to generate
+        the remaining three SOAP sections via MedGemma.
+        
+        Args:
+            transcript: Original patient statement
+            subjective_data: Dict with chief_complaint, symptom_details, etc.
+            
+        Returns:
+            Dict with soap_note_objective, soap_note_assessment, soap_note_plan
+        """
+        import re
+        
+        from app.prompts.documentation_prompts import create_soap_oap_prompt
+        
+        prompt_content = create_soap_oap_prompt(transcript, subjective_data)
+        
+        # Use chat template
+        messages = [{"role": "user", "content": prompt_content}]
+        prompt = self.tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        
+        inputs = self.tokenizer(
+            prompt, return_tensors="pt", padding=True
+        ).to(self.model.device)
+        
+        with torch.inference_mode():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=512,
+                do_sample=False,
+                repetition_penalty=settings.medgemma_repetition_penalty,
+                pad_token_id=self.tokenizer.eos_token_id
+            )
+        
+        generated_ids = outputs[0][inputs.input_ids.shape[1]:]
+        decoded = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+        
+        logger.info(f"SOAP O/A/P raw output (length={len(decoded)}): {decoded[:200]}...")
+        
+        # Parse the three sections from model output
+        result = self._parse_soap_sections(decoded)
+        
+        return result
+    
+    def _parse_soap_sections(self, text: str) -> dict:
+        """
+        Parse Objective, Assessment, and Plan sections from model output.
+        
+        Looks for section headers (OBJECTIVE:, ASSESSMENT:, PLAN:) and
+        extracts the text following each header.
+        
+        Args:
+            text: Raw model output text
+            
+        Returns:
+            Dict with soap_note_objective, soap_note_assessment, soap_note_plan
+        """
+        import re
+        
+        defaults = {
+            "soap_note_objective": "Pending clinician assessment.",
+            "soap_note_assessment": "Pending clinician assessment.",
+            "soap_note_plan": "Pending clinician assessment."
+        }
+        
+        if not text or len(text.strip()) < 10:
+            logger.warning("SOAP O/A/P output too short, using defaults")
+            return defaults
+        
+        # Try to extract each section using header patterns
+        section_map = {
+            "soap_note_objective": [r'OBJECTIVE:\s*(.+?)(?=ASSESSMENT:|$)',
+                                    r'O:\s*(.+?)(?=A:|ASSESSMENT:|$)'],
+            "soap_note_assessment": [r'ASSESSMENT:\s*(.+?)(?=PLAN:|$)',
+                                     r'A:\s*(.+?)(?=P:|PLAN:|$)'],
+            "soap_note_plan": [r'PLAN:\s*(.+?)$',
+                               r'P:\s*(.+?)$']
+        }
+        
+        result = {}
+        for key, patterns in section_map.items():
+            extracted = None
+            for pattern in patterns:
+                match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+                if match:
+                    extracted = match.group(1).strip()
+                    # Clean up any trailing whitespace or artifacts
+                    extracted = re.sub(r'\s+', ' ', extracted).strip()
+                    if len(extracted) > 10:  # Minimum viable content
+                        break
+                    else:
+                        extracted = None
+            
+            if extracted:
+                result[key] = extracted
+                logger.info(f"Extracted {key}: {extracted[:80]}...")
+            else:
+                result[key] = defaults[key]
+                logger.warning(f"Could not extract {key}, using default")
+        
+        return result
     
     def is_ready(self) -> bool:
         """Check if the model is loaded and ready."""
