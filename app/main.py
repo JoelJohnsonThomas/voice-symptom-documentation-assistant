@@ -8,7 +8,7 @@ This system provides ADMINISTRATIVE DOCUMENTATION SUPPORT ONLY.
 It does NOT perform clinical triage, provide medical advice, or make clinical decisions.
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,11 +16,17 @@ from pydantic import BaseModel
 from typing import Optional
 import tempfile
 import logging
+import asyncio
+import json
+import subprocess
+import io
+import numpy as np
 from pathlib import Path
 
 from app.config import settings
 from app.models.medasr_service import get_medasr_service
 from app.models.medgemma_service import get_medgemma_service
+from app.models.streaming_asr import StreamingASRSession
 from app.utils.audio_handler import AudioHandler
 
 # Configure logging
@@ -273,6 +279,171 @@ async def voice_intake(audio: UploadFile = File(...)):
         # Clean up temp file
         if temp_file:
             Path(temp_path).unlink(missing_ok=True)
+
+
+# =====================================================
+# WEBSOCKET STREAMING TRANSCRIPTION
+# =====================================================
+
+def decode_webm_chunk(webm_bytes: bytes, sample_rate: int = 16000) -> Optional[np.ndarray]:
+    """
+    Decode a WebM/Opus audio chunk to raw PCM float32 using FFmpeg.
+
+    Args:
+        webm_bytes: Raw WebM audio bytes from browser MediaRecorder
+        sample_rate: Target sample rate
+
+    Returns:
+        Float32 numpy array of audio samples, or None on failure
+    """
+    try:
+        process = subprocess.run(
+            [
+                'ffmpeg', '-y',
+                '-i', 'pipe:0',           # Read from stdin
+                '-f', 'f32le',            # Output raw float32 little-endian
+                '-acodec', 'pcm_f32le',
+                '-ar', str(sample_rate),  # Target sample rate
+                '-ac', '1',              # Mono
+                'pipe:1'                  # Write to stdout
+            ],
+            input=webm_bytes,
+            capture_output=True,
+            timeout=10
+        )
+
+        if process.returncode != 0:
+            return None
+
+        audio = np.frombuffer(process.stdout, dtype=np.float32)
+        return audio if len(audio) > 0 else None
+
+    except Exception as e:
+        logger.debug(f"WebM decode failed: {e}")
+        return None
+
+
+@app.websocket("/ws/transcribe")
+async def websocket_transcribe(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time streaming transcription.
+
+    Protocol:
+    - Client sends binary audio chunks (WebM from MediaRecorder)
+    - Server accumulates chunks and sends partial transcripts
+    - Client sends text message '{"action": "stop"}' to finalize
+    - Server sends final transcript and closes
+
+    Messages sent to client:
+    - {"type": "partial", "text": "new words", "full_text": "all words so far"}
+    - {"type": "final", "text": "complete transcript", "full_text": "..."}
+    - {"type": "error", "message": "error description"}
+    - {"type": "connected", "message": "ready"}
+    """
+    await websocket.accept()
+    logger.info("WebSocket client connected for streaming transcription")
+
+    session = StreamingASRSession(
+        sample_rate=settings.audio_sample_rate
+    )
+
+    # Accumulated WebM data for decoding
+    webm_accumulator = bytearray()
+    last_decoded_size = 0
+
+    try:
+        # Send ready signal
+        await websocket.send_json({
+            "type": "connected",
+            "message": "ready"
+        })
+
+        while True:
+            # Receive data (binary audio or text commands)
+            message = await websocket.receive()
+
+            if message.get("type") == "websocket.disconnect":
+                break
+
+            if "bytes" in message and message["bytes"]:
+                # Binary audio chunk from MediaRecorder (WebM/Opus)
+                chunk_bytes = message["bytes"]
+                webm_accumulator.extend(chunk_bytes)
+
+                # Decode the accumulated WebM data
+                # We re-decode the full accumulated WebM each time because
+                # WebM chunks from MediaRecorder aren't independently decodable
+                audio_data = decode_webm_chunk(
+                    bytes(webm_accumulator),
+                    settings.audio_sample_rate
+                )
+
+                if audio_data is not None and len(audio_data) > last_decoded_size:
+                    # Add only the NEW samples to the session
+                    new_samples = audio_data[last_decoded_size:]
+                    session.add_audio_array(new_samples)
+                    last_decoded_size = len(audio_data)
+
+                # Check if we should run transcription
+                if session.should_transcribe():
+                    # Run transcription in thread pool to avoid blocking
+                    loop = asyncio.get_event_loop()
+                    result = await loop.run_in_executor(
+                        None, session.transcribe_partial
+                    )
+
+                    if result:
+                        await websocket.send_json(result)
+                        logger.debug(
+                            f"Sent partial: '{result.get('text', '')[:50]}...'"
+                        )
+
+            elif "text" in message and message["text"]:
+                # Text command from client
+                try:
+                    cmd = json.loads(message["text"])
+                except json.JSONDecodeError:
+                    cmd = {"action": message["text"]}
+
+                if cmd.get("action") == "stop":
+                    logger.info("Client requested stop — running final transcription")
+
+                    # Run final transcription
+                    loop = asyncio.get_event_loop()
+                    result = await loop.run_in_executor(
+                        None, session.transcribe_final
+                    )
+
+                    await websocket.send_json(result)
+                    logger.info(
+                        f"Sent final transcript: {len(result.get('text', ''))} chars"
+                    )
+                    break
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e)
+            })
+        except Exception:
+            pass
+    finally:
+        # Run final transcription if not already done
+        if not session._is_finalized and session.get_buffer_duration() > 0.5:
+            try:
+                result = session.transcribe_final()
+                await websocket.send_json(result)
+            except Exception:
+                pass
+
+        logger.info(
+            f"Streaming session ended: {session.get_buffer_duration():.1f}s audio, "
+            f"{session._chunk_count} chunks"
+        )
 
 
 # Root endpoint - serve index.html

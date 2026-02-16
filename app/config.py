@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     max_audio_duration_seconds: int = 300
     audio_sample_rate: int = 16000
     
+    # Streaming Transcription
+    streaming_interval_seconds: float = 2.0  # How often to run ASR on buffer (GPU: 2s, CPU: 4s)
+    
     # API
     api_host: str = "0.0.0.0"
     api_port: int = 8000

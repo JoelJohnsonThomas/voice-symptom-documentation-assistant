@@ -2,6 +2,7 @@
 fastapi==0.110.0
 uvicorn[standard]==0.27.0
 python-multipart==0.0.9
+websockets>=12.0
 
 # Core ML (CRITICAL)
 numpy==1.26.4

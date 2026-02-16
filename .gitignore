@@ -56,6 +56,8 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+#txt files
+enhancements_plan.txt
 
 # Audio files (optional - uncomment if you don't want to track test audio)
 # *.wav

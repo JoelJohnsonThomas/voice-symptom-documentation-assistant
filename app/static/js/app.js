@@ -1,6 +1,11 @@
 /**
  * VoxDoc - Voice Symptom Intake & Documentation Assistant
  * Dark Theme Edition - JavaScript Controller
+ *
+ * Features:
+ * - Real-time streaming transcription via WebSocket
+ * - Text input fallback for manual symptom entry
+ * - SOAP note generation with MedGemma
  */
 
 // =====================================================
@@ -37,6 +42,10 @@ const elements = {
     loadingState: document.getElementById('loadingState'),
     resultsContainer: document.getElementById('resultsContainer'),
 
+    // Live Transcript (Streaming)
+    liveTranscriptState: document.getElementById('liveTranscriptState'),
+    liveTranscriptText: document.getElementById('liveTranscriptText'),
+
     // Results
     transcriptionText: document.getElementById('transcriptionText'),
     chiefComplaint: document.getElementById('chiefComplaint'),
@@ -62,8 +71,184 @@ const state = {
     audioUrl: null,
     recordingStartTime: null,
     recordingInterval: null,
-    currentDocumentation: null
+    currentDocumentation: null,
+
+    // WebSocket streaming state
+    websocket: null,
+    liveTranscript: '',
+    wsConnected: false,
+    streamingMode: true  // true = use WebSocket streaming, false = fallback to upload
 };
+
+// =====================================================
+// WEBSOCKET STREAMING
+// =====================================================
+
+/**
+ * Build the WebSocket URL from current page location.
+ * Handles both local dev (ws://) and ngrok/production (wss://).
+ */
+function getWebSocketUrl() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}/ws/transcribe`;
+}
+
+/**
+ * Connect to the WebSocket streaming endpoint.
+ * Returns a promise that resolves when the connection is ready.
+ */
+function connectWebSocket() {
+    return new Promise((resolve, reject) => {
+        const url = getWebSocketUrl();
+        console.log(`[WS] Connecting to ${url}`);
+
+        const ws = new WebSocket(url);
+        let resolved = false;
+
+        ws.onopen = () => {
+            console.log('[WS] Connection opened');
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                handleWebSocketMessage(data);
+
+                // Resolve the promise on first "connected" message
+                if (data.type === 'connected' && !resolved) {
+                    resolved = true;
+                    state.wsConnected = true;
+                    resolve(ws);
+                }
+            } catch (e) {
+                console.error('[WS] Failed to parse message:', e);
+            }
+        };
+
+        ws.onerror = (error) => {
+            console.error('[WS] Error:', error);
+            state.wsConnected = false;
+            if (!resolved) {
+                resolved = true;
+                reject(error);
+            }
+        };
+
+        ws.onclose = (event) => {
+            console.log(`[WS] Connection closed (code: ${event.code})`);
+            state.wsConnected = false;
+            state.websocket = null;
+        };
+
+        // Timeout after 5 seconds
+        setTimeout(() => {
+            if (!resolved) {
+                resolved = true;
+                ws.close();
+                reject(new Error('WebSocket connection timeout'));
+            }
+        }, 5000);
+    });
+}
+
+/**
+ * Handle incoming WebSocket messages (partial/final transcripts).
+ */
+function handleWebSocketMessage(data) {
+    switch (data.type) {
+        case 'connected':
+            console.log('[WS] Server ready');
+            break;
+
+        case 'partial':
+            // Update live transcript with new words
+            state.liveTranscript = data.full_text || '';
+            updateLiveTranscript(data.text, data.full_text);
+            break;
+
+        case 'final':
+            // Final transcript received
+            state.liveTranscript = data.full_text || data.text || '';
+            updateLiveTranscriptFinal(state.liveTranscript);
+            console.log(`[WS] Final transcript: ${state.liveTranscript.length} chars`);
+            break;
+
+        case 'error':
+            console.error('[WS] Server error:', data.message);
+            elements.voiceStatus.textContent = `Error: ${data.message}`;
+            break;
+
+        default:
+            console.log('[WS] Unknown message type:', data.type);
+    }
+}
+
+/**
+ * Update the live transcript display with new words (animated).
+ */
+function updateLiveTranscript(deltaText, fullText) {
+    if (!elements.liveTranscriptText) return;
+
+    // Remove placeholder if present
+    const placeholder = elements.liveTranscriptText.querySelector('.live-placeholder');
+    if (placeholder) {
+        placeholder.remove();
+    }
+
+    if (deltaText && deltaText.trim()) {
+        // Add new words with animation
+        const words = deltaText.trim().split(/\s+/);
+        words.forEach((word, i) => {
+            const span = document.createElement('span');
+            span.className = 'live-word';
+            span.textContent = (elements.liveTranscriptText.textContent.trim() ? ' ' : '') + word;
+            span.style.animationDelay = `${i * 0.05}s`;
+            elements.liveTranscriptText.appendChild(span);
+        });
+    } else if (fullText) {
+        // Full replacement (correction case) — no animation
+        elements.liveTranscriptText.textContent = fullText;
+    }
+
+    // Auto-scroll to bottom
+    elements.liveTranscriptText.scrollTop = elements.liveTranscriptText.scrollHeight;
+}
+
+/**
+ * Set the final transcript text (removes animations).
+ */
+function updateLiveTranscriptFinal(text) {
+    if (!elements.liveTranscriptText) return;
+
+    // Replace with plain text (no more animation)
+    elements.liveTranscriptText.textContent = text || 'No speech detected.';
+    elements.liveTranscriptText.style.borderLeftColor = '#10b981'; // Green = finalized
+}
+
+/**
+ * Show the live transcript panel.
+ */
+function showLiveTranscript() {
+    elements.emptyState?.classList.add('hidden');
+    elements.loadingState?.classList.add('hidden');
+    elements.resultsContainer?.classList.add('hidden');
+    elements.liveTranscriptState?.classList.remove('hidden');
+    elements.transcriptTitle.textContent = 'Live Transcript';
+
+    // Reset the live transcript text
+    if (elements.liveTranscriptText) {
+        elements.liveTranscriptText.innerHTML =
+            '<span class="live-placeholder">Listening... speak clearly into your microphone</span>';
+        elements.liveTranscriptText.style.borderLeftColor = '#ef4444'; // Red = live
+    }
+}
+
+/**
+ * Hide the live transcript panel.
+ */
+function hideLiveTranscript() {
+    elements.liveTranscriptState?.classList.add('hidden');
+}
 
 // =====================================================
 // SETTINGS & NEURAL CONFIG
@@ -274,7 +459,7 @@ function closeSidebar() {
 }
 
 // =====================================================
-// RECORDING
+// RECORDING (with WebSocket Streaming)
 // =====================================================
 function setupRecording() {
     elements.recordBtn?.addEventListener('click', toggleRecording);
@@ -292,12 +477,34 @@ async function startRecording() {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
+        // Try to connect WebSocket first
+        let wsConnected = false;
+        try {
+            state.websocket = await connectWebSocket();
+            wsConnected = true;
+            state.streamingMode = true;
+            console.log('[Recording] WebSocket streaming mode enabled');
+        } catch (wsErr) {
+            console.warn('[Recording] WebSocket failed, falling back to upload mode:', wsErr);
+            state.streamingMode = false;
+        }
+
         state.mediaRecorder = new MediaRecorder(stream);
         state.audioChunks = [];
+        state.liveTranscript = '';
 
         state.mediaRecorder.ondataavailable = (e) => {
             if (e.data.size > 0) {
                 state.audioChunks.push(e.data);
+
+                // Stream audio chunk via WebSocket (if connected)
+                if (state.streamingMode && state.websocket && state.websocket.readyState === WebSocket.OPEN) {
+                    e.data.arrayBuffer().then(buffer => {
+                        state.websocket.send(buffer);
+                    }).catch(err => {
+                        console.warn('[WS] Failed to send chunk:', err);
+                    });
+                }
             }
         };
 
@@ -308,7 +515,8 @@ async function startRecording() {
             updateSubmitButton();
         };
 
-        state.mediaRecorder.start(100);
+        // Use 500ms timeslice for streaming chunks
+        state.mediaRecorder.start(500);
         state.isRecording = true;
         state.recordingStartTime = Date.now();
 
@@ -318,8 +526,15 @@ async function startRecording() {
         elements.stopIcon?.classList.remove('hidden');
         elements.waveformContainer?.classList.add('recording');
         elements.recordRipple?.classList.add('active');
-        elements.voiceStatus.textContent = 'Listening and transcribing...';
         elements.durationDisplay?.classList.remove('hidden');
+
+        // Show live transcript if streaming
+        if (state.streamingMode) {
+            elements.voiceStatus.textContent = 'Listening and transcribing live...';
+            showLiveTranscript();
+        } else {
+            elements.voiceStatus.textContent = 'Recording... (will transcribe after stop)';
+        }
 
         // Start timer
         state.recordingInterval = setInterval(updateRecordingTime, 1000);
@@ -341,10 +556,25 @@ function stopRecording() {
         elements.stopIcon?.classList.add('hidden');
         elements.waveformContainer?.classList.remove('recording');
         elements.recordRipple?.classList.remove('active');
-        elements.voiceStatus.textContent = 'Recording complete. Ready to generate documentation.';
 
         // Stop timer
         clearInterval(state.recordingInterval);
+
+        // Send stop signal via WebSocket and wait for final transcript
+        if (state.streamingMode && state.websocket && state.websocket.readyState === WebSocket.OPEN) {
+            elements.voiceStatus.textContent = 'Finalizing transcript...';
+            state.websocket.send(JSON.stringify({ action: 'stop' }));
+
+            // Wait a moment for the final transcript, then close
+            setTimeout(() => {
+                if (state.websocket && state.websocket.readyState === WebSocket.OPEN) {
+                    state.websocket.close();
+                }
+                elements.voiceStatus.textContent = 'Recording complete. Ready to generate documentation.';
+            }, 3000);
+        } else {
+            elements.voiceStatus.textContent = 'Recording complete. Ready to generate documentation.';
+        }
     }
 }
 
@@ -372,9 +602,10 @@ function setupTextInput() {
 function updateSubmitButton() {
     const hasAudio = state.audioBlob !== null;
     const hasText = elements.textInput?.value.trim().length > 0;
+    const hasLiveTranscript = state.liveTranscript && state.liveTranscript.trim().length > 0;
 
     if (elements.submitBtn) {
-        elements.submitBtn.disabled = !(hasAudio || hasText);
+        elements.submitBtn.disabled = !(hasAudio || hasText || hasLiveTranscript);
     }
 }
 
@@ -388,16 +619,46 @@ function setupSubmit() {
 async function processInput() {
     const hasAudio = state.audioBlob !== null;
     const textContent = elements.textInput?.value.trim();
+    const hasLiveTranscript = state.liveTranscript && state.liveTranscript.trim().length > 0;
 
-    if (!hasAudio && !textContent) return;
+    if (!hasAudio && !textContent && !hasLiveTranscript) return;
 
+    // Hide live transcript and show loading
+    hideLiveTranscript();
     showLoading();
 
     try {
         let response;
 
-        if (hasAudio) {
-            // Voice input: Use /api/voice-intake with FormData
+        // If we have a live transcript from streaming, use it directly for documentation
+        if (hasLiveTranscript && state.streamingMode) {
+            // Use the streaming transcript directly — skip re-transcription
+            const transcriptToUse = state.liveTranscript;
+
+            response = await fetch('/api/document', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ transcript: transcriptToUse })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || 'Processing failed');
+            }
+
+            const data = await response.json();
+            data.transcript = transcriptToUse;
+            data.duration_seconds = state.recordingStartTime
+                ? (Date.now() - state.recordingStartTime) / 1000
+                : 0;
+
+            state.currentDocumentation = data;
+            displayResults(data);
+
+        } else if (hasAudio && !state.streamingMode) {
+            // Fallback: Upload audio for server-side transcription
             const formData = new FormData();
             formData.append('audio', state.audioBlob, 'recording.webm');
 
@@ -405,7 +666,17 @@ async function processInput() {
                 method: 'POST',
                 body: formData
             });
-        } else {
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || 'Processing failed');
+            }
+
+            const data = await response.json();
+            state.currentDocumentation = data;
+            displayResults(data);
+
+        } else if (textContent) {
             // Text input: Use /api/document with JSON
             response = await fetch('/api/document', {
                 method: 'POST',
@@ -414,23 +685,20 @@ async function processInput() {
                 },
                 body: JSON.stringify({ transcript: textContent })
             });
-        }
 
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.detail || 'Processing failed');
-        }
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || 'Processing failed');
+            }
 
-        const data = await response.json();
-
-        // Normalize response format (text endpoint doesn't include transcript)
-        if (!hasAudio) {
+            const data = await response.json();
+            // Normalize response format
             data.transcript = textContent;
             data.duration_seconds = 0;
-        }
 
-        state.currentDocumentation = data;
-        displayResults(data);
+            state.currentDocumentation = data;
+            displayResults(data);
+        }
 
     } catch (error) {
         console.error('Processing error:', error);
@@ -444,6 +712,7 @@ async function processInput() {
 function showLoading() {
     elements.emptyState?.classList.add('hidden');
     elements.resultsContainer?.classList.add('hidden');
+    elements.liveTranscriptState?.classList.add('hidden');
     elements.loadingState?.classList.remove('hidden');
     elements.transcriptTitle.textContent = 'Processing...';
 }
@@ -451,12 +720,14 @@ function showLoading() {
 function showResults() {
     elements.emptyState?.classList.add('hidden');
     elements.loadingState?.classList.add('hidden');
+    elements.liveTranscriptState?.classList.add('hidden');
     elements.resultsContainer?.classList.remove('hidden');
     elements.transcriptTitle.textContent = 'Documentation Results';
 }
 
 function showError(message) {
     elements.loadingState?.classList.add('hidden');
+    elements.liveTranscriptState?.classList.add('hidden');
     elements.transcriptTitle.textContent = 'Error';
 
     // Create error display
@@ -539,13 +810,13 @@ async function copyToClipboard() {
 CHIEF COMPLAINT: ${doc.chief_complaint}
 
 SYMPTOM DETAILS:
-- Symptoms: ${doc.symptom_details?.symptoms || 'N/A'}
+- Symptoms: ${Array.isArray(doc.symptom_details?.symptoms_mentioned) ? doc.symptom_details.symptoms_mentioned.join(', ') : (doc.symptom_details?.symptoms || 'N/A')}
 - Onset: ${doc.symptom_details?.onset || 'N/A'}
 - Duration: ${doc.symptom_details?.duration || 'N/A'}
 - Location: ${doc.symptom_details?.location || 'N/A'}
 
 SOAP NOTE (Subjective):
-${doc.soap_subjective}
+${doc.soap_note_subjective || 'N/A'}
     `.trim();
 
     try {
