@@ -86,7 +86,7 @@ This tool adheres to **Google Health AI Developer Foundations** principles:
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
 
 ---
 *Built with ❤️ for better healthcare workflows.*
