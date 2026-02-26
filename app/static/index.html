@@ -11,6 +11,9 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- HTML2PDF for Print-Ready Reports -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </head>
 
 <body>
@@ -92,14 +95,28 @@
                         </div>
                     </div>
                 </div>
+                <!-- Recent Documents List -->
+                <div class="recent-docs" id="recentDocsList">
+                    <!-- Populated dynamically from localStorage -->
+                </div>
             </nav>
 
             <div class="sidebar-footer">
+                <div class="action-card" id="batchExportBtn"
+                    style="padding: 12px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <polyline points="14 2 14 8 20 8" />
+                        <line x1="12" y1="18" x2="12" y2="12" />
+                        <line x1="9" y1="15" x2="15" y2="15" />
+                    </svg>
+                    <span style="font-size: 0.8rem; font-weight: 500;">Batch Export All (PDF)</span>
+                </div>
                 <div class="user-card">
-                    <div class="user-avatar">AI</div>
+                    <div class="user-avatar">DR</div>
                     <div class="user-info">
-                        <p class="user-name">AI Assistant</p>
-                        <p class="user-plan">Medical Documentation</p>
+                        <div class="user-name">Dr. Sarah Chen</div>
+                        <div class="user-plan">Enterprise Plan</div>
                     </div>
                 </div>
             </div>
@@ -322,19 +339,31 @@
                                 <div id="liveIndicator" class="live-indicator"></div>
                                 <h3 id="transcriptTitle">Live Transcript</h3>
                             </div>
-                            <div class="transcript-actions">
-                                <button id="copyBtn" class="action-btn" title="Copy to clipboard">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                                    </svg>
-                                </button>
-                                <button id="exportBtn" class="action-btn" title="Export JSON">
+                            <div class="export-actions">
+                                <button class="action-btn" id="exportBtn" title="Download JSON">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                                         <polyline points="7 10 12 15 17 10" />
                                         <line x1="12" y1="15" x2="12" y2="3" />
                                     </svg>
+                                    <span>JSON</span>
+                                </button>
+                                <button class="action-btn" id="exportPdfBtn" title="Download Print-Ready PDF">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                        <polyline points="14 2 14 8 20 8" />
+                                        <line x1="16" y1="13" x2="8" y2="13" />
+                                        <line x1="16" y1="17" x2="8" y2="17" />
+                                        <polyline points="10 9 9 9 8 9" />
+                                    </svg>
+                                    <span>PDF</span>
+                                </button>
+                                <button class="action-btn primary" id="copyBtn" title="Copy to Clipboard">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                                    </svg>
+                                    <span>Copy Note</span>
                                 </button>
                             </div>
                         </div>
@@ -897,6 +926,85 @@
                 </div>
             </div>
         </main>
+    </div>
+
+    <div id="pdfPrintContainer" style="display: none;">
+        <div id="pdfPrintTemplate" class="pdf-template">
+            <!-- Header / Branding -->
+            <div class="pdf-header">
+                <div class="pdf-logo">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+                        <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+                    </svg>
+                    <h2>VoxDoc Clinic</h2>
+                </div>
+                <div class="pdf-meta">
+                    <p><strong>Date:</strong> <span id="pdfDate"></span></p>
+                    <p><strong>Time:</strong> <span id="pdfTime"></span></p>
+                    <p><strong>Provider:</strong> Dr. Sarah Chen</p>
+                </div>
+            </div>
+
+            <hr class="pdf-divider">
+
+            <!-- Patient Info -->
+            <div class="pdf-patient-info">
+                <div class="pdf-info-row">
+                    <span><strong>Patient Name:</strong> Doe, John</span>
+                    <span><strong>DOB:</strong> 01/01/1980 (46y)</span>
+                    <span><strong>MRN:</strong> 987654321</span>
+                </div>
+            </div>
+
+            <!-- Clinical Content -->
+            <div class="pdf-content">
+                <h3 class="pdf-section-title">Chief Complaint</h3>
+                <p id="pdfChiefComplaint"></p>
+
+                <h3 class="pdf-section-title">Clinical Details</h3>
+                <div id="pdfClinicalDetails"></div>
+
+                <div id="pdfVisualFindingsContainer">
+                    <h3 class="pdf-section-title">Visual Inspection</h3>
+                    <p id="pdfVisualFindings"></p>
+                </div>
+
+                <h3 class="pdf-section-title">SOAP Note</h3>
+                <div class="pdf-soap-section">
+                    <h4>Subjective</h4>
+                    <p id="pdfSubjective"></p>
+                </div>
+
+                <div class="pdf-soap-section">
+                    <h4>Objective</h4>
+                    <p id="pdfObjective"></p>
+                </div>
+
+                <div class="pdf-soap-section">
+                    <h4>Assessment</h4>
+                    <p id="pdfAssessment"></p>
+                </div>
+
+                <div class="pdf-soap-section">
+                    <h4>Plan</h4>
+                    <p id="pdfPlan"></p>
+                </div>
+            </div>
+
+            <!-- Footer / Signatures -->
+            <div class="pdf-footer">
+                <div class="pdf-signature">
+                    <div class="sig-line"></div>
+                    <p>Provider Signature</p>
+                    <p class="sig-name">Dr. Sarah Chen, MD</p>
+                </div>
+                <div class="pdf-signature">
+                    <div class="sig-line"></div>
+                    <p>Date</p>
+                </div>
+            </div>
+            <div class="pdf-page-number">VoxDoc Generated Report</div>
+        </div>
     </div>
 
     <script src="/static/js/app.js"></script>

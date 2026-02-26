@@ -84,7 +84,9 @@ const elements = {
 
     // Actions
     copyBtn: document.getElementById('copyBtn'),
-    exportBtn: document.getElementById('exportBtn')
+    exportBtn: document.getElementById('exportBtn'),
+    exportPdfBtn: document.getElementById('exportPdfBtn'),
+    batchExportBtn: document.getElementById('batchExportBtn')
 };
 
 // =====================================================
@@ -119,7 +121,10 @@ const state = {
 
     // Image Upload State
     uploadedImageFile: null,
-    imageAnalysis: null
+    imageAnalysis: null,
+
+    // Session History
+    sessionHistory: []
 };
 
 // =====================================================
@@ -504,6 +509,8 @@ function init() {
     setupActions();
     setupSOAPActions();
     setupSettings();
+    loadSessionHistory();
+    setupPDFExport();
 }
 
 // =====================================================
@@ -1677,6 +1684,189 @@ function getSOAPHistoryEl(section) {
 }
 
 // =====================================================
+// SESSION HISTORY & PDF EXPORT
+// =====================================================
+
+function loadSessionHistory() {
+    try {
+        const stored = localStorage.getItem('voxdoc_sessions');
+        if (stored) {
+            state.sessionHistory = JSON.parse(stored);
+            updateRecentDocsUI();
+        }
+    } catch (e) {
+        console.error('Failed to load session history', e);
+    }
+}
+
+function saveSessionToHistory() {
+    if (!state.currentDocumentation) return;
+
+    const doc = state.currentDocumentation.documentation;
+    const sessionData = {
+        id: Date.now().toString(),
+        timestamp: new Date().toISOString(),
+        patientName: "Patient " + Math.floor(Math.random() * 1000), // Placeholder
+        chiefComplaint: doc.chief_complaint || 'N/A',
+        clinicalDetails: elements.symptomDetails?.innerHTML || 'N/A',
+        visualFindings: elements.visualFindings ? elements.visualFindings.textContent : '',
+        soapS: elements.soapS ? elements.soapS.textContent : doc.soap_note_subjective,
+        soapO: elements.soapO ? elements.soapO.textContent : doc.soap_note_objective,
+        soapA: elements.soapA ? elements.soapA.textContent : doc.soap_note_assessment,
+        soapP: elements.soapP ? elements.soapP.textContent : doc.soap_note_plan
+    };
+
+    // Prepend to history, max 15 items
+    state.sessionHistory.unshift(sessionData);
+    if (state.sessionHistory.length > 15) {
+        state.sessionHistory.pop();
+    }
+
+    try {
+        localStorage.setItem('voxdoc_sessions', JSON.stringify(state.sessionHistory));
+        updateRecentDocsUI();
+    } catch (e) {
+        console.error('Failed to save session to history', e);
+    }
+}
+
+function updateRecentDocsUI() {
+    const listEl = document.getElementById('recentDocsList');
+    if (!listEl) return;
+
+    if (state.sessionHistory.length === 0) {
+        listEl.innerHTML = `<div class="recent-doc-item" style="color: var(--text-muted); font-style: italic; font-size: 0.8rem; justify-content: center; border: none;">No recent sessions</div>`;
+        return;
+    }
+
+    listEl.innerHTML = state.sessionHistory.map(session => {
+        const date = new Date(session.timestamp);
+        const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const dateStr = date.toLocaleDateString();
+        const displayTime = date.toDateString() === new Date().toDateString() ? `Today, ${timeStr}` : `${dateStr}, ${timeStr}`;
+
+        return `
+        <div class="recent-doc-item" data-id="${session.id}">
+            <div class="doc-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                    <line x1="16" y1="13" x2="8" y2="13" />
+                    <line x1="16" y1="17" x2="8" y2="17" />
+                    <polyline points="10 9 9 9 8 9" />
+                </svg>
+            </div>
+            <div class="doc-info">
+                <div class="doc-title">${truncate(session.chiefComplaint, 25)}</div>
+                <div class="doc-date">${displayTime}</div>
+            </div>
+        </div>
+        `;
+    }).join('');
+}
+
+function setupPDFExport() {
+    if (elements.exportPdfBtn) {
+        elements.exportPdfBtn.addEventListener('click', () => {
+            if (!state.currentDocumentation) return;
+            // Update the session in history before exporting to capture any edits
+            saveSessionToHistory();
+            exportSinglePDF(state.sessionHistory[0]);
+        });
+    }
+
+    if (elements.batchExportBtn) {
+        elements.batchExportBtn.addEventListener('click', () => {
+            if (state.sessionHistory.length === 0) {
+                alert('No sessions found in history to export.');
+                return;
+            }
+            batchExportPDF();
+        });
+    }
+}
+
+function populatePDFTemplate(session) {
+    const d = new Date(session.timestamp);
+    document.getElementById('pdfDate').textContent = d.toLocaleDateString();
+    document.getElementById('pdfTime').textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    document.getElementById('pdfChiefComplaint').textContent = session.chiefComplaint;
+    document.getElementById('pdfClinicalDetails').innerHTML = session.clinicalDetails;
+
+    if (session.visualFindings) {
+        document.getElementById('pdfVisualFindingsContainer').style.display = 'block';
+        document.getElementById('pdfVisualFindings').textContent = session.visualFindings;
+    } else {
+        document.getElementById('pdfVisualFindingsContainer').style.display = 'none';
+    }
+
+    document.getElementById('pdfSubjective').textContent = session.soapS;
+    document.getElementById('pdfObjective').textContent = session.soapO;
+    document.getElementById('pdfAssessment').textContent = session.soapA;
+    document.getElementById('pdfPlan').textContent = session.soapP;
+}
+
+function exportSinglePDF(session) {
+    const template = document.getElementById('pdfPrintTemplate');
+    if (!template) return;
+
+    populatePDFTemplate(session);
+
+    template.parentElement.style.display = 'block';
+
+    const opt = {
+        margin: 0,
+        filename: `VoxDoc_Report_${session.id}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2 },
+        jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' }
+    };
+
+    html2pdf().set(opt).from(template).save().then(() => {
+        template.parentElement.style.display = 'none';
+    });
+}
+
+function batchExportPDF() {
+    const containerItem = document.createElement('div');
+    const template = document.getElementById('pdfPrintTemplate');
+
+    // We clone the template for each session
+    state.sessionHistory.forEach((session, index) => {
+        populatePDFTemplate(session);
+        const clone = template.cloneNode(true);
+        clone.id = ''; // remove id duplicate
+
+        containerItem.appendChild(clone);
+
+        // Add page break if it's not the last item
+        if (index < state.sessionHistory.length - 1) {
+            const pageBreak = document.createElement('div');
+            pageBreak.className = 'html2pdf__page-break';
+            containerItem.appendChild(pageBreak);
+        }
+    });
+
+    // Temporarily attach to DOM for html2pdf to render
+    containerItem.style.display = 'none';
+    document.body.appendChild(containerItem);
+
+    const opt = {
+        margin: 0,
+        filename: `VoxDoc_Batch_Reports_${Date.now()}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2 },
+        jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' }
+    };
+
+    html2pdf().set(opt).from(containerItem).save().then(() => {
+        document.body.removeChild(containerItem);
+    });
+}
+
+// =====================================================
 // INITIALIZE
+
 // =====================================================
 document.addEventListener('DOMContentLoaded', init);
