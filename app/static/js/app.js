@@ -59,13 +59,28 @@ const elements = {
     soapO: document.getElementById('soapO'),
     soapA: document.getElementById('soapA'),
     soapP: document.getElementById('soapP'),
+    visualFindings: document.getElementById('visualFindings'),
+    imageFindingsCard: document.getElementById('imageFindingsCard'),
+    imageFindingsThumbnailContainer: document.getElementById('imageFindingsThumbnailContainer'),
     soapStatusS: document.getElementById('soapStatusS'),
     soapStatusO: document.getElementById('soapStatusO'),
     soapStatusA: document.getElementById('soapStatusA'),
     soapStatusP: document.getElementById('soapStatusP'),
     soapStatusCC: document.getElementById('soapStatusCC'),
     soapStatusCD: document.getElementById('soapStatusCD'),
+    soapStatusVI: document.getElementById('soapStatusVI'),
     soapOverallStatus: document.getElementById('soapOverallStatus'),
+
+    // Image Upload
+    imageDropZone: document.getElementById('imageDropZone'),
+    imageFileInput: document.getElementById('imageFileInput'),
+    imagePreviewContainer: document.getElementById('imagePreviewContainer'),
+    imagePreview: document.getElementById('imagePreview'),
+    removeImageBtn: document.getElementById('removeImageBtn'),
+    imageFilename: document.getElementById('imageFilename'),
+    imageFilesize: document.getElementById('imageFilesize'),
+    dropZoneContent: document.getElementById('dropZoneContent'),
+    imageAnalyzingState: document.getElementById('imageAnalyzingState'),
 
     // Actions
     copyBtn: document.getElementById('copyBtn'),
@@ -98,8 +113,13 @@ const state = {
         assessment: { status: 'pending', edited: false, originalText: '', history: [] },
         plan: { status: 'pending', edited: false, originalText: '', history: [] },
         chief_complaint: { status: 'pending', edited: false, originalText: '', history: [] },
-        clinical_details: { status: 'pending', edited: false, originalText: '', history: [] }
-    }
+        clinical_details: { status: 'pending', edited: false, originalText: '', history: [] },
+        visual_findings: { status: 'pending', edited: false, originalText: '', history: [] }
+    },
+
+    // Image Upload State
+    uploadedImageFile: null,
+    imageAnalysis: null
 };
 
 // =====================================================
@@ -479,6 +499,7 @@ function init() {
     setupNavigation();
     setupRecording();
     setupTextInput();
+    setupImageUpload();
     setupSubmit();
     setupActions();
     setupSOAPActions();
@@ -689,13 +710,117 @@ function setupTextInput() {
     });
 }
 
+// =====================================================
+// IMAGE UPLOAD
+// =====================================================
+function setupImageUpload() {
+    if (!elements.imageDropZone || !elements.imageFileInput) return;
+
+    // Click to open file dialog
+    elements.imageDropZone.addEventListener('click', (e) => {
+        // Prevent click if clicking the remove button
+        if (!e.target.closest('.remove-image-btn')) {
+            elements.imageFileInput.click();
+        }
+    });
+
+    // File input change
+    elements.imageFileInput.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+            handleImageSelection(e.target.files[0]);
+        }
+    });
+
+    // Drag and Drop
+    elements.imageDropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        elements.imageDropZone.classList.add('drag-over');
+    });
+
+    elements.imageDropZone.addEventListener('dragleave', () => {
+        elements.imageDropZone.classList.remove('drag-over');
+    });
+
+    elements.imageDropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        elements.imageDropZone.classList.remove('drag-over');
+
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            handleImageSelection(e.dataTransfer.files[0]);
+        }
+    });
+
+    // Remove Image
+    elements.removeImageBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        clearImageSelection();
+    });
+}
+
+function handleImageSelection(file) {
+    // Validate file type
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+    if (!validTypes.includes(file.type)) {
+        alert('Please select a valid image file (JPEG, PNG, WebP).');
+        return;
+    }
+
+    // Validate file size (10MB max)
+    const maxSize = 10 * 1024 * 1024;
+    if (file.size > maxSize) {
+        alert(`File is too large (${(file.size / (1024 * 1024)).toFixed(1)}MB). Max allowed size is 10MB.`);
+        return;
+    }
+
+    state.uploadedImageFile = file;
+
+    // Update UI
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        elements.imagePreview.src = e.target.result;
+        elements.imageFilename.textContent = file.name;
+        elements.imageFilesize.textContent = formatBytes(file.size);
+
+        elements.dropZoneContent.classList.add('hidden');
+        elements.imagePreviewContainer.classList.remove('hidden');
+
+        updateSubmitButton();
+    };
+    reader.readAsDataURL(file);
+}
+
+function clearImageSelection() {
+    state.uploadedImageFile = null;
+    state.imageAnalysis = null;
+
+    // Reset file input
+    elements.imageFileInput.value = '';
+
+    // Update UI
+    elements.dropZoneContent.classList.remove('hidden');
+    elements.imagePreviewContainer.classList.add('hidden');
+    elements.imagePreview.src = '';
+
+    updateSubmitButton();
+}
+
+function formatBytes(bytes, decimals = 1) {
+    if (!+bytes) return '0 Bytes';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+}
+
 function updateSubmitButton() {
     const hasAudio = state.audioBlob !== null;
     const hasText = elements.textInput?.value.trim().length > 0;
     const hasLiveTranscript = state.liveTranscript && state.liveTranscript.trim().length > 0;
+    const hasImage = state.uploadedImageFile !== null;
 
     if (elements.submitBtn) {
-        elements.submitBtn.disabled = !(hasAudio || hasText || hasLiveTranscript);
+        elements.submitBtn.disabled = !(hasAudio || hasText || hasLiveTranscript || hasImage);
     }
 }
 
@@ -710,45 +835,56 @@ async function processInput() {
     const hasAudio = state.audioBlob !== null;
     const textContent = elements.textInput?.value.trim();
     const hasLiveTranscript = state.liveTranscript && state.liveTranscript.trim().length > 0;
+    const hasImage = state.uploadedImageFile !== null;
 
-    if (!hasAudio && !textContent && !hasLiveTranscript) return;
+    if (!hasAudio && !textContent && !hasLiveTranscript && !hasImage) return;
 
     // Hide live transcript and show loading
     hideLiveTranscript();
     showLoading();
 
+    // Update loading text
+    if (hasImage) {
+        elements.imagePreviewContainer.classList.add('hidden');
+        elements.imageAnalyzingState.classList.remove('hidden');
+        elements.transcriptTitle.textContent = 'Analyzing Image...';
+    }
+
     try {
         let response;
+        let imageFindingsData = null;
 
-        // If we have a live transcript from streaming, use it directly for documentation
-        if (hasLiveTranscript && state.streamingMode) {
-            // Use the streaming transcript directly — skip re-transcription
-            const transcriptToUse = state.liveTranscript;
+        // 1. Process image first if present
+        if (hasImage) {
+            const imageFormData = new FormData();
+            imageFormData.append('image', state.uploadedImageFile);
 
-            response = await fetch('/api/document', {
+            const imgResponse = await fetch('/api/analyze-image', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ transcript: transcriptToUse })
+                body: imageFormData
             });
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || 'Processing failed');
+            if (!imgResponse.ok) {
+                const errorData = await imgResponse.json();
+                throw new Error(`Image analysis failed: ${errorData.detail || 'Unknown error'}`);
             }
 
-            const data = await response.json();
-            data.transcript = transcriptToUse;
-            data.duration_seconds = state.recordingStartTime
-                ? (Date.now() - state.recordingStartTime) / 1000
-                : 0;
+            const imgResult = await imgResponse.json();
+            imageFindingsData = imgResult.image_analysis;
+            state.imageAnalysis = imageFindingsData;
 
-            state.currentDocumentation = data;
-            displayResults(data);
+            elements.imageAnalyzingState.classList.add('hidden');
+            elements.imagePreviewContainer.classList.remove('hidden');
+            elements.transcriptTitle.textContent = 'Generating Documentation...';
+        }
 
+        // 2. Determine what transcript to use for documentation
+        let documentPayload = {};
+
+        if (hasLiveTranscript && state.streamingMode) {
+            documentPayload = { transcript: state.liveTranscript };
         } else if (hasAudio && !state.streamingMode) {
-            // Fallback: Upload audio for server-side transcription
+            // Special handling for legacy audio
             const formData = new FormData();
             formData.append('audio', state.audioBlob, 'recording.webm');
 
@@ -763,28 +899,53 @@ async function processInput() {
             }
 
             const data = await response.json();
-            state.currentDocumentation = data;
-            displayResults(data);
 
+            // If we also had image findings, we need to run another generation pass
+            // since /api/voice-intake doesn't accept image_findings directly yet
+            if (imageFindingsData) {
+                documentPayload = {
+                    transcript: data.transcript,
+                    image_findings: imageFindingsData.visual_findings_text
+                };
+            } else {
+                state.currentDocumentation = data;
+                displayResults(data);
+                return;
+            }
         } else if (textContent) {
-            // Text input: Use /api/document with JSON
+            documentPayload = { transcript: textContent };
+        } else if (hasImage) {
+            // Case where ONLY an image is provided
+            documentPayload = { transcript: "Patient uploaded an image only." };
+        }
+
+        // Add image findings to the document payload if available
+        if (imageFindingsData) {
+            documentPayload.image_findings = imageFindingsData.visual_findings_text;
+        }
+
+        // 3. Generate documentation
+        if (Object.keys(documentPayload).length > 0) {
             response = await fetch('/api/document', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ transcript: textContent })
+                body: JSON.stringify(documentPayload)
             });
 
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.detail || 'Processing failed');
+                throw new Error(`Documentation generation failed: ${errorData.detail || 'Unknown error'}`);
             }
 
-            const data = await response.json();
-            // Normalize response format
-            data.transcript = textContent;
-            data.duration_seconds = 0;
+            let data = await response.json();
+
+            // Normalize response format depending on input source
+            data.transcript = documentPayload.transcript;
+            data.duration_seconds = state.recordingStartTime && hasAudio
+                ? (Date.now() - state.recordingStartTime) / 1000
+                : 0;
 
             state.currentDocumentation = data;
             displayResults(data);
@@ -792,6 +953,13 @@ async function processInput() {
 
     } catch (error) {
         console.error('Processing error:', error);
+
+        // Reset image UI on error
+        if (state.uploadedImageFile) {
+            elements.imageAnalyzingState?.classList.add('hidden');
+            elements.imagePreviewContainer?.classList.remove('hidden');
+        }
+
         showError(error.message);
     }
 }
@@ -878,18 +1046,49 @@ function displayResults(data) {
         `;
     }
 
-    // SOAP Notes + CC/CD — populate and store originals
-    const soapMap = {
+    // SOAP Notes + CC/CD/VI — populate and store originals
+    let soapMap = {
         soapS: doc.soap_note_subjective || 'Patient describes symptoms.',
         soapO: doc.soap_note_objective || 'Pending clinician assessment.',
         soapA: doc.soap_note_assessment || 'Pending clinician assessment.',
         soapP: doc.soap_note_plan || 'Pending clinician assessment.',
         chiefComplaint: doc.chief_complaint || 'N/A',
-        symptomDetails: elements.symptomDetails?.innerHTML || 'N/A'
+        symptomDetails: elements.symptomDetails?.innerHTML || 'N/A',
     };
 
+    // Handle Image Analysis Display
+    if (state.imageAnalysis && elements.imageFindingsCard && elements.visualFindings) {
+        const viText = state.imageAnalysis.visual_findings_text || state.imageAnalysis.description;
+
+        elements.imageFindingsCard.classList.remove('hidden');
+        elements.visualFindings.textContent = viText;
+        soapMap.visualFindings = viText;
+
+        // Show thumbnail
+        if (elements.imageFindingsThumbnailContainer && state.uploadedImageFile) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                elements.imageFindingsThumbnailContainer.innerHTML = `
+                    <img src="${e.target.result}" class="findings-thumbnail" alt="Uploaded finding">
+                    <div class="findings-meta">
+                        <strong>Uploaded Document</strong>
+                        <span>Body Area: ${state.imageAnalysis.body_area || 'Not specified'}</span><br>
+                        <span>Size: ${formatBytes(state.uploadedImageFile.size)}</span>
+                    </div>
+                `;
+                elements.imageFindingsThumbnailContainer.classList.add('active');
+            };
+            reader.readAsDataURL(state.uploadedImageFile);
+        }
+    } else if (elements.imageFindingsCard) {
+        elements.imageFindingsCard.classList.add('hidden');
+        if (elements.imageFindingsThumbnailContainer) {
+            elements.imageFindingsThumbnailContainer.classList.remove('active');
+        }
+    }
+
     for (const [id, text] of Object.entries(soapMap)) {
-        if (elements[id]) {
+        if (elements[id] && id !== 'visualFindings') {
             if (id === 'symptomDetails') {
                 // Already rendered formatted HTML for Symptom Details
             } else {
@@ -905,7 +1104,8 @@ function displayResults(data) {
         assessment: { status: 'pending', edited: false, originalText: soapMap.soapA, history: [] },
         plan: { status: 'pending', edited: false, originalText: soapMap.soapP, history: [] },
         chief_complaint: { status: 'pending', edited: false, originalText: soapMap.chiefComplaint, history: [] },
-        clinical_details: { status: 'pending', edited: false, originalText: soapMap.symptomDetails, history: [] }
+        clinical_details: { status: 'pending', edited: false, originalText: soapMap.symptomDetails, history: [] },
+        visual_findings: { status: 'pending', edited: false, originalText: soapMap.visualFindings || '', history: [] }
     };
 
     // Log initial generation event
@@ -1158,7 +1358,7 @@ function handleSOAPApprove(section) {
  * Reset all SOAP card states to initial "Pending Review".
  */
 function resetSOAPCardStates() {
-    ['subjective', 'objective', 'assessment', 'plan'].forEach(section => {
+    ['subjective', 'objective', 'assessment', 'plan', 'visual_findings'].forEach(section => {
         const bodyEl = getSOAPBodyEl(section);
         const card = bodyEl?.closest('.soap-section-card');
         const statusBadge = getSOAPStatusEl(section);
@@ -1442,7 +1642,8 @@ function getSOAPBodyEl(section) {
         assessment: 'soapA',
         plan: 'soapP',
         chief_complaint: 'chiefComplaint',
-        clinical_details: 'symptomDetails'
+        clinical_details: 'symptomDetails',
+        visual_findings: 'visualFindings'
     };
     return elements[map[section]] || null;
 }
@@ -1455,7 +1656,8 @@ function getSOAPStatusEl(section) {
         assessment: 'soapStatusA',
         plan: 'soapStatusP',
         chief_complaint: 'soapStatusCC',
-        clinical_details: 'soapStatusCD'
+        clinical_details: 'soapStatusCD',
+        visual_findings: 'soapStatusVI'
     };
     return elements[map[section]] || null;
 }
@@ -1468,7 +1670,8 @@ function getSOAPHistoryEl(section) {
         assessment: 'soapHistoryA',
         plan: 'soapHistoryP',
         chief_complaint: 'soapHistoryCC',
-        clinical_details: 'soapHistoryCD'
+        clinical_details: 'soapHistoryCD',
+        visual_findings: 'soapHistoryVI'
     };
     return document.getElementById(map[section]) || null;
 }
