@@ -63,6 +63,8 @@ const elements = {
     soapStatusO: document.getElementById('soapStatusO'),
     soapStatusA: document.getElementById('soapStatusA'),
     soapStatusP: document.getElementById('soapStatusP'),
+    soapStatusCC: document.getElementById('soapStatusCC'),
+    soapStatusCD: document.getElementById('soapStatusCD'),
     soapOverallStatus: document.getElementById('soapOverallStatus'),
 
     // Actions
@@ -89,12 +91,14 @@ const state = {
     wsConnected: false,
     streamingMode: true,  // true = use WebSocket streaming, false = fallback to upload
 
-    // SOAP section approval state
+    // SOAP section approval state (with edit history)
     soapApprovals: {
-        subjective: { status: 'pending', edited: false },
-        objective: { status: 'pending', edited: false },
-        assessment: { status: 'pending', edited: false },
-        plan: { status: 'pending', edited: false }
+        subjective: { status: 'pending', edited: false, originalText: '', history: [] },
+        objective: { status: 'pending', edited: false, originalText: '', history: [] },
+        assessment: { status: 'pending', edited: false, originalText: '', history: [] },
+        plan: { status: 'pending', edited: false, originalText: '', history: [] },
+        chief_complaint: { status: 'pending', edited: false, originalText: '', history: [] },
+        clinical_details: { status: 'pending', edited: false, originalText: '', history: [] }
     }
 };
 
@@ -271,13 +275,45 @@ function hideLiveTranscript() {
 // =====================================================
 // SETTINGS & NEURAL CONFIG
 // =====================================================
+
+// Theme cycle order for header toggle
+const THEME_ORDER = ['glass', 'light', 'neon', 'midnight', 'aurora'];
+
+// Meta theme-color mapping per theme
+const THEME_META_COLORS = {
+    glass: '#0f111a',
+    neon: '#050505',
+    midnight: '#000000',
+    light: '#f0f4f8',
+    aurora: '#141020'
+};
+
 function setupSettings() {
     // Theme Switching
     const themeCards = document.querySelectorAll('.theme-card');
 
-    // Load saved settings
-    const savedTheme = localStorage.getItem('voxdoc_theme') || 'glass';
-    applyTheme(savedTheme);
+    // Determine initial theme: saved > OS preference > default (glass)
+    let initialTheme = localStorage.getItem('voxdoc_theme');
+    if (!initialTheme) {
+        // First visit — detect OS preference
+        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+            initialTheme = 'light';
+        } else {
+            initialTheme = 'glass';
+        }
+    }
+    applyTheme(initialTheme);
+
+    // Listen for OS theme changes (live)
+    if (window.matchMedia) {
+        window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', (e) => {
+            // Only auto-switch if user hasn't explicitly picked a theme
+            const userPicked = localStorage.getItem('voxdoc_theme');
+            if (!userPicked) {
+                applyTheme(e.matches ? 'light' : 'glass');
+            }
+        });
+    }
 
     const savedSound = localStorage.getItem('voxdoc_sound') === 'true';
     const soundToggle = document.getElementById('soundToggle');
@@ -291,6 +327,9 @@ function setupSettings() {
         });
     });
 
+    // Header quick-toggle
+    setupThemeToggle();
+
     // Neural Graph Animation
     setupNeuralGraph();
 
@@ -299,14 +338,46 @@ function setupSettings() {
 }
 
 function applyTheme(theme) {
-    document.body.className = ''; // Reset
+    // Remove all theme classes
+    THEME_ORDER.forEach(t => {
+        if (t !== 'glass') document.body.classList.remove(`theme-${t}`);
+    });
+
+    // Apply new theme class (glass = no class, uses :root defaults)
     if (theme !== 'glass') {
         document.body.classList.add(`theme-${theme}`);
     }
 
-    // Update UI active state
+    // Update <meta name="theme-color">
+    const metaTheme = document.querySelector('meta[name="theme-color"]');
+    if (metaTheme) {
+        metaTheme.setAttribute('content', THEME_META_COLORS[theme] || '#0f111a');
+    }
+
+    // Update settings panel theme cards active state
     document.querySelectorAll('.theme-card').forEach(c => {
         c.classList.toggle('active', c.dataset.theme === theme);
+    });
+
+    // Store current theme for toggle cycling
+    window._currentTheme = theme;
+}
+
+function setupThemeToggle() {
+    const toggleBtn = document.getElementById('themeToggle');
+    if (!toggleBtn) return;
+
+    toggleBtn.addEventListener('click', () => {
+        const current = window._currentTheme || 'glass';
+        const currentIndex = THEME_ORDER.indexOf(current);
+        const nextIndex = (currentIndex + 1) % THEME_ORDER.length;
+        const nextTheme = THEME_ORDER[nextIndex];
+        applyTheme(nextTheme);
+        saveSettings('voxdoc_theme', nextTheme);
+
+        // Subtle spin animation on click
+        toggleBtn.style.transform = 'rotate(360deg)';
+        setTimeout(() => { toggleBtn.style.transform = ''; }, 400);
     });
 }
 
@@ -807,27 +878,41 @@ function displayResults(data) {
         `;
     }
 
-    // SOAP Notes — populate all 4 sections
+    // SOAP Notes + CC/CD — populate and store originals
     const soapMap = {
         soapS: doc.soap_note_subjective || 'Patient describes symptoms.',
         soapO: doc.soap_note_objective || 'Pending clinician assessment.',
         soapA: doc.soap_note_assessment || 'Pending clinician assessment.',
-        soapP: doc.soap_note_plan || 'Pending clinician assessment.'
+        soapP: doc.soap_note_plan || 'Pending clinician assessment.',
+        chiefComplaint: doc.chief_complaint || 'N/A',
+        symptomDetails: elements.symptomDetails?.innerHTML || 'N/A'
     };
 
     for (const [id, text] of Object.entries(soapMap)) {
         if (elements[id]) {
-            elements[id].textContent = text;
+            if (id === 'symptomDetails') {
+                // Already rendered formatted HTML for Symptom Details
+            } else {
+                elements[id].textContent = text;
+            }
         }
     }
 
-    // Reset SOAP approval states
+    // Reset approval states and store original AI text
     state.soapApprovals = {
-        subjective: { status: 'pending', edited: false },
-        objective: { status: 'pending', edited: false },
-        assessment: { status: 'pending', edited: false },
-        plan: { status: 'pending', edited: false }
+        subjective: { status: 'pending', edited: false, originalText: soapMap.soapS, history: [] },
+        objective: { status: 'pending', edited: false, originalText: soapMap.soapO, history: [] },
+        assessment: { status: 'pending', edited: false, originalText: soapMap.soapA, history: [] },
+        plan: { status: 'pending', edited: false, originalText: soapMap.soapP, history: [] },
+        chief_complaint: { status: 'pending', edited: false, originalText: soapMap.chiefComplaint, history: [] },
+        clinical_details: { status: 'pending', edited: false, originalText: soapMap.symptomDetails, history: [] }
     };
+
+    // Log initial generation event
+    for (const section of Object.keys(state.soapApprovals)) {
+        logSOAPHistory(section, 'generated', 'AI-generated content');
+    }
+
     resetSOAPCardStates();
 }
 
@@ -899,9 +984,18 @@ ${soapP}
 function exportJSON() {
     if (!state.currentDocumentation) return;
 
-    // Enrich export data with approval status and potentially edited content
+    // Enrich export data with approval status, edit history, and current content
     const exportData = JSON.parse(JSON.stringify(state.currentDocumentation));
     exportData.soap_approvals = state.soapApprovals;
+    exportData.soap_edit_history = {};
+    for (const [section, data] of Object.entries(state.soapApprovals)) {
+        exportData.soap_edit_history[section] = {
+            original_ai_text: data.originalText,
+            current_status: data.status,
+            was_edited: data.edited,
+            timeline: data.history
+        };
+    }
 
     // Include current (possibly edited) SOAP text
     if (exportData.documentation) {
@@ -925,18 +1019,24 @@ function exportJSON() {
 }
 
 // =====================================================
-// SOAP SECTION EDIT / APPROVE
+// SOAP SECTION EDIT / APPROVE / REJECT / HISTORY
 // =====================================================
 
 /**
- * Set up click handlers for all SOAP Edit and Approve buttons.
+ * Set up click handlers for all SOAP Edit, Reject, Approve, and History buttons.
  */
 function setupSOAPActions() {
     document.querySelectorAll('.soap-edit-btn').forEach(btn => {
         btn.addEventListener('click', () => handleSOAPEdit(btn.dataset.section));
     });
+    document.querySelectorAll('.soap-reject-btn').forEach(btn => {
+        btn.addEventListener('click', () => handleSOAPReject(btn.dataset.section));
+    });
     document.querySelectorAll('.soap-approve-btn').forEach(btn => {
         btn.addEventListener('click', () => handleSOAPApprove(btn.dataset.section));
+    });
+    document.querySelectorAll('.soap-history-toggle').forEach(btn => {
+        btn.addEventListener('click', () => toggleSOAPHistory(btn.dataset.section));
     });
 }
 
@@ -961,13 +1061,24 @@ function handleSOAPEdit(section) {
         editBtn.querySelector('span').textContent = 'Edit';
         editBtn.classList.remove('saving');
 
-        // Mark as edited
+        // Mark as edited and log history
+        const currentText = bodyEl.textContent;
         state.soapApprovals[section].edited = true;
         state.soapApprovals[section].status = 'edited';
+        logSOAPHistory(section, 'edited', currentText);
 
         if (statusBadge) {
             statusBadge.textContent = 'Edited';
             statusBadge.className = 'soap-status badge info';
+        }
+
+        // Clear rejected state if re-editing
+        card?.classList.remove('rejected', 'just-rejected');
+        const rejectBtn = card?.querySelector('.soap-reject-btn');
+        if (rejectBtn) {
+            rejectBtn.classList.remove('rejected');
+            rejectBtn.disabled = false;
+            rejectBtn.querySelector('span').textContent = 'Reject';
         }
 
         updateSOAPOverallStatus();
@@ -1015,11 +1126,21 @@ function handleSOAPApprove(section) {
         editBtn.classList.remove('saving');
     }
 
-    // Mark approved
+    // Mark approved and log
     state.soapApprovals[section].status = 'approved';
     card?.classList.add('approved');
+    card?.classList.remove('rejected', 'just-rejected');
     approveBtn.classList.add('approved');
     approveBtn.querySelector('span').textContent = 'Approved';
+    logSOAPHistory(section, 'approved', bodyEl.textContent);
+
+    // Reset reject button
+    const rejectBtn = card?.querySelector('.soap-reject-btn');
+    if (rejectBtn) {
+        rejectBtn.classList.remove('rejected');
+        rejectBtn.disabled = false;
+        rejectBtn.querySelector('span').textContent = 'Reject';
+    }
 
     if (statusBadge) {
         statusBadge.textContent = '✓ Approved';
@@ -1045,7 +1166,7 @@ function resetSOAPCardStates() {
         const approveBtn = card?.querySelector('.soap-approve-btn');
 
         bodyEl?.setAttribute('contenteditable', 'false');
-        card?.classList.remove('editing', 'approved', 'just-approved');
+        card?.classList.remove('editing', 'approved', 'just-approved', 'rejected', 'just-rejected');
 
         if (statusBadge) {
             statusBadge.textContent = 'Pending Review';
@@ -1063,6 +1184,22 @@ function resetSOAPCardStates() {
             approveBtn.disabled = false;
             approveBtn.querySelector('span').textContent = 'Approve';
         }
+
+        const rejectBtn = card?.querySelector('.soap-reject-btn');
+        if (rejectBtn) {
+            rejectBtn.classList.remove('rejected');
+            rejectBtn.disabled = false;
+            rejectBtn.querySelector('span').textContent = 'Reject';
+        }
+
+        // Hide and clear history panel
+        const historyEl = getSOAPHistoryEl(section);
+        if (historyEl) {
+            historyEl.classList.add('hidden');
+            historyEl.innerHTML = '';
+        }
+        const historyToggle = card?.querySelector('.soap-history-toggle');
+        historyToggle?.classList.remove('active');
     });
 
     updateSOAPOverallStatus();
@@ -1076,27 +1213,264 @@ function updateSOAPOverallStatus() {
 
     const sections = Object.values(state.soapApprovals);
     const approvedCount = sections.filter(s => s.status === 'approved').length;
+    const rejectedCount = sections.filter(s => s.status === 'rejected').length;
     const total = sections.length;
 
     if (approvedCount === total) {
         elements.soapOverallStatus.textContent = 'All sections approved ✓';
         elements.soapOverallStatus.className = 'badge success';
+    } else if (rejectedCount > 0) {
+        elements.soapOverallStatus.textContent = `${rejectedCount} rejected · ${total - approvedCount - rejectedCount} pending`;
+        elements.soapOverallStatus.className = 'badge warning';
     } else {
         elements.soapOverallStatus.textContent = `${total - approvedCount} of ${total} pending review`;
         elements.soapOverallStatus.className = 'badge info';
     }
 }
 
+/**
+ * Handle Reject button click for a SOAP section.
+ * Prompts for optional reason, strikes-through the content.
+ */
+function handleSOAPReject(section) {
+    const bodyEl = getSOAPBodyEl(section);
+    const card = bodyEl?.closest('.soap-section-card');
+    const rejectBtn = card?.querySelector('.soap-reject-btn');
+    const approveBtn = card?.querySelector('.soap-approve-btn');
+    const editBtn = card?.querySelector('.soap-edit-btn');
+    const statusBadge = getSOAPStatusEl(section);
+
+    if (!bodyEl || !rejectBtn) return;
+
+    // Prompt for optional reason
+    const reason = prompt('Reason for rejection (optional):') || '';
+
+    // Close edit mode if open
+    bodyEl.setAttribute('contenteditable', 'false');
+    card?.classList.remove('editing', 'approved', 'just-approved');
+    if (editBtn) {
+        editBtn.querySelector('span').textContent = 'Edit';
+        editBtn.classList.remove('saving');
+    }
+    if (approveBtn) {
+        approveBtn.classList.remove('approved');
+        approveBtn.querySelector('span').textContent = 'Approve';
+    }
+
+    // Mark rejected
+    state.soapApprovals[section].status = 'rejected';
+    card?.classList.add('rejected');
+    rejectBtn.classList.add('rejected');
+    rejectBtn.querySelector('span').textContent = 'Rejected';
+    logSOAPHistory(section, 'rejected', reason ? `Rejected: ${reason}` : 'Rejected by clinician');
+
+    if (statusBadge) {
+        statusBadge.textContent = '✗ Rejected';
+        statusBadge.className = 'soap-status badge danger';
+    }
+
+    // Flash animation
+    card?.classList.add('just-rejected');
+    setTimeout(() => card?.classList.remove('just-rejected'), 900);
+
+    updateSOAPOverallStatus();
+}
+
+/**
+ * Toggle the history panel for a SOAP section.
+ */
+function toggleSOAPHistory(section) {
+    const historyEl = getSOAPHistoryEl(section);
+    const bodyEl = getSOAPBodyEl(section);
+    const card = bodyEl?.closest('.soap-section-card');
+    const toggleBtn = card?.querySelector('.soap-history-toggle');
+
+    if (!historyEl) return;
+
+    const isVisible = !historyEl.classList.contains('hidden');
+
+    if (isVisible) {
+        historyEl.classList.add('hidden');
+        toggleBtn?.classList.remove('active');
+    } else {
+        renderSOAPHistory(section);
+        historyEl.classList.remove('hidden');
+        toggleBtn?.classList.add('active');
+    }
+}
+
+/**
+ * Log a timestamped entry in a SOAP section's history.
+ */
+function logSOAPHistory(section, action, text) {
+    if (!state.soapApprovals[section]) return;
+    state.soapApprovals[section].history.push({
+        action,
+        text: text || '',
+        timestamp: new Date().toISOString()
+    });
+}
+
+/**
+ * Render the history panel for a SOAP section.
+ */
+function renderSOAPHistory(section) {
+    const historyEl = getSOAPHistoryEl(section);
+    const data = state.soapApprovals[section];
+    if (!historyEl || !data) return;
+
+    const entries = data.history;
+
+    // Build original AI text block
+    const isSymptomDetails = section === 'clinical_details';
+    const originalBlock = data.originalText
+        ? `<div class="soap-history-original">
+               <div style="display: flex; align-items: center; margin-bottom: 4px;">
+                   <div class="soap-history-original-label">Original AI Output</div>
+                   <button class="soap-history-restore-btn" onclick="restoreOriginalSOAP('${section}')">Restore</button>
+               </div>
+               ${isSymptomDetails ? data.originalText : escapeHTML(data.originalText)}
+           </div>`
+        : '';
+
+    // Build timeline
+    let timeline = '';
+    if (entries.length === 0) {
+        timeline = '<p class="soap-history-empty">No history yet.</p>';
+    } else {
+        const items = entries.map(e => {
+            const time = new Date(e.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const dotClass = e.action;
+            const actionLabel = e.action.charAt(0).toUpperCase() + e.action.slice(1);
+            let detail = '';
+            if (e.text) {
+                const plainText = e.text.replace(/<[^>]*>?/gm, ''); // Strip HTML for list items in history
+                detail = ` — ${escapeHTML(truncate(plainText, 120))}`;
+            }
+            return `<li class="soap-history-entry">
+                        <span class="soap-history-dot ${dotClass}"></span>
+                        <span class="soap-history-time">${time}</span>
+                        <span class="soap-history-action"><strong>${actionLabel}</strong>${detail}</span>
+                    </li>`;
+        }).join('');
+        timeline = `<ul class="soap-history-timeline">${items}</ul>`;
+    }
+
+    historyEl.innerHTML = originalBlock + timeline;
+}
+
+/**
+ * Restore a section to its original AI-generated text.
+ */
+function restoreOriginalSOAP(section) {
+    const data = state.soapApprovals[section];
+    if (!data || !data.originalText) return;
+
+    if (!confirm(`Are you sure you want to restore the original ${section.replace('_', ' ')}? Current edits will be lost.`)) {
+        return;
+    }
+
+    const bodyEl = getSOAPBodyEl(section);
+    const card = bodyEl?.closest('.soap-section-card');
+    const statusBadge = getSOAPStatusEl(section);
+
+    if (!bodyEl) return;
+
+    // Restore text
+    if (section === 'clinical_details') {
+        bodyEl.innerHTML = data.originalText;
+    } else {
+        bodyEl.textContent = data.originalText;
+    }
+
+    // Reset state
+    data.status = 'pending';
+    data.edited = false;
+    logSOAPHistory(section, 'restored', 'Restored to original AI output');
+
+    // UI Reset
+    card?.classList.remove('approved', 'rejected', 'editing', 'just-approved', 'just-rejected');
+    if (statusBadge) {
+        statusBadge.textContent = 'Pending Review';
+        statusBadge.className = 'soap-status badge warning';
+    }
+
+    const approveBtn = card?.querySelector('.soap-approve-btn');
+    if (approveBtn) {
+        approveBtn.classList.remove('approved');
+        approveBtn.disabled = false;
+        approveBtn.querySelector('span').textContent = 'Approve';
+    }
+
+    const rejectBtn = card?.querySelector('.soap-reject-btn');
+    if (rejectBtn) {
+        rejectBtn.classList.remove('rejected');
+        rejectBtn.disabled = false;
+        rejectBtn.querySelector('span').textContent = 'Reject';
+    }
+
+    const editBtn = card?.querySelector('.soap-edit-btn');
+    if (editBtn) {
+        editBtn.querySelector('span').textContent = 'Edit';
+        editBtn.classList.remove('saving');
+    }
+
+    bodyEl.setAttribute('contenteditable', 'false');
+
+    // Re-render history to show "Restored" entry
+    renderSOAPHistory(section);
+    updateSOAPOverallStatus();
+}
+
+/** Escape HTML entities. */
+function escapeHTML(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+/** Truncate a string to maxLen characters. */
+function truncate(str, maxLen) {
+    return str.length > maxLen ? str.slice(0, maxLen) + '…' : str;
+}
+
 /** Get the body element for a SOAP section. */
 function getSOAPBodyEl(section) {
-    const map = { subjective: 'soapS', objective: 'soapO', assessment: 'soapA', plan: 'soapP' };
+    const map = {
+        subjective: 'soapS',
+        objective: 'soapO',
+        assessment: 'soapA',
+        plan: 'soapP',
+        chief_complaint: 'chiefComplaint',
+        clinical_details: 'symptomDetails'
+    };
     return elements[map[section]] || null;
 }
 
 /** Get the status badge element for a SOAP section. */
 function getSOAPStatusEl(section) {
-    const map = { subjective: 'soapStatusS', objective: 'soapStatusO', assessment: 'soapStatusA', plan: 'soapStatusP' };
+    const map = {
+        subjective: 'soapStatusS',
+        objective: 'soapStatusO',
+        assessment: 'soapStatusA',
+        plan: 'soapStatusP',
+        chief_complaint: 'soapStatusCC',
+        clinical_details: 'soapStatusCD'
+    };
     return elements[map[section]] || null;
+}
+
+/** Get the history panel element for a SOAP section. */
+function getSOAPHistoryEl(section) {
+    const map = {
+        subjective: 'soapHistoryS',
+        objective: 'soapHistoryO',
+        assessment: 'soapHistoryA',
+        plan: 'soapHistoryP',
+        chief_complaint: 'soapHistoryCC',
+        clinical_details: 'soapHistoryCD'
+    };
+    return document.getElementById(map[section]) || null;
 }
 
 // =====================================================

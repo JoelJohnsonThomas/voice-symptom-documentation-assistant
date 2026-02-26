@@ -123,6 +123,25 @@
                     </div>
                 </div>
                 <div class="header-right">
+                    <!-- Theme Toggle Button -->
+                    <button id="themeToggle" class="theme-toggle-btn" title="Switch theme">
+                        <svg class="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                        </svg>
+                        <svg class="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <circle cx="12" cy="12" r="5" />
+                            <line x1="12" y1="1" x2="12" y2="3" />
+                            <line x1="12" y1="21" x2="12" y2="23" />
+                            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                            <line x1="1" y1="12" x2="3" y2="12" />
+                            <line x1="21" y1="12" x2="23" y2="12" />
+                            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                        </svg>
+                    </button>
                     <!-- Compliance Badge -->
                     <div class="compliance-badge">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -355,15 +374,99 @@
                                 </div>
 
                                 <!-- Chief Complaint -->
-                                <div class="result-section">
-                                    <h4>Chief Complaint</h4>
-                                    <p id="chiefComplaint" class="chief-complaint"></p>
+                                <div class="soap-section-card" data-section="chief_complaint">
+                                    <div class="soap-card-header">
+                                        <span class="soap-label soap-label-cc">CC</span>
+                                        <h5>Chief Complaint</h5>
+                                        <span class="soap-status badge warning" id="soapStatusCC">Pending Review</span>
+                                    </div>
+                                    <div class="soap-card-body" id="chiefComplaint" contenteditable="false"></div>
+                                    <div class="soap-card-actions">
+                                        <button class="soap-edit-btn" data-section="chief_complaint"
+                                            title="Edit this section">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                width="14" height="14">
+                                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                            </svg>
+                                            <span>Edit</span>
+                                        </button>
+                                        <button class="soap-reject-btn" data-section="chief_complaint"
+                                            title="Reject this section">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                width="14" height="14">
+                                                <line x1="18" y1="6" x2="6" y2="18" />
+                                                <line x1="6" y1="6" x2="18" y2="18" />
+                                            </svg>
+                                            <span>Reject</span>
+                                        </button>
+                                        <button class="soap-approve-btn" data-section="chief_complaint"
+                                            title="Approve this section">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                width="14" height="14">
+                                                <polyline points="20 6 9 17 4 12" />
+                                            </svg>
+                                            <span>Approve</span>
+                                        </button>
+                                        <button class="soap-history-toggle" data-section="chief_complaint"
+                                            title="View edit history">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                width="14" height="14">
+                                                <circle cx="12" cy="12" r="10" />
+                                                <polyline points="12 6 12 12 16 14" />
+                                            </svg>
+                                            <span>History</span>
+                                        </button>
+                                    </div>
+                                    <div class="soap-history-panel hidden" id="soapHistoryCC"></div>
                                 </div>
 
-                                <!-- Symptom Details -->
-                                <div class="result-section">
-                                    <h4>Symptom Details</h4>
-                                    <div id="symptomDetails" class="symptom-details"></div>
+                                <!-- Clinical Details -->
+                                <div class="soap-section-card" data-section="clinical_details">
+                                    <div class="soap-card-header">
+                                        <span class="soap-label soap-label-cd">CD</span>
+                                        <h5>Clinical Details</h5>
+                                        <span class="soap-status badge warning" id="soapStatusCD">Pending Review</span>
+                                    </div>
+                                    <div class="soap-card-body" id="symptomDetails" contenteditable="false"></div>
+                                    <div class="soap-card-actions">
+                                        <button class="soap-edit-btn" data-section="clinical_details"
+                                            title="Edit this section">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                width="14" height="14">
+                                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                            </svg>
+                                            <span>Edit</span>
+                                        </button>
+                                        <button class="soap-reject-btn" data-section="clinical_details"
+                                            title="Reject this section">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                width="14" height="14">
+                                                <line x1="18" y1="6" x2="6" y2="18" />
+                                                <line x1="6" y1="6" x2="18" y2="18" />
+                                            </svg>
+                                            <span>Reject</span>
+                                        </button>
+                                        <button class="soap-approve-btn" data-section="clinical_details"
+                                            title="Approve this section">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                width="14" height="14">
+                                                <polyline points="20 6 9 17 4 12" />
+                                            </svg>
+                                            <span>Approve</span>
+                                        </button>
+                                        <button class="soap-history-toggle" data-section="clinical_details"
+                                            title="View edit history">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                width="14" height="14">
+                                                <circle cx="12" cy="12" r="10" />
+                                                <polyline points="12 6 12 12 16 14" />
+                                            </svg>
+                                            <span>History</span>
+                                        </button>
+                                    </div>
+                                    <div class="soap-history-panel hidden" id="soapHistoryCD"></div>
                                 </div>
 
                                 <!-- SOAP Notes — Full (S, O, A, P) -->
@@ -393,6 +496,15 @@
                                                 </svg>
                                                 <span>Edit</span>
                                             </button>
+                                            <button class="soap-reject-btn" data-section="subjective"
+                                                title="Reject this section">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" width="14" height="14">
+                                                    <line x1="18" y1="6" x2="6" y2="18" />
+                                                    <line x1="6" y1="6" x2="18" y2="18" />
+                                                </svg>
+                                                <span>Reject</span>
+                                            </button>
                                             <button class="soap-approve-btn" data-section="subjective"
                                                 title="Approve this section">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -401,7 +513,17 @@
                                                 </svg>
                                                 <span>Approve</span>
                                             </button>
+                                            <button class="soap-history-toggle" data-section="subjective"
+                                                title="View edit history">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" width="14" height="14">
+                                                    <circle cx="12" cy="12" r="10" />
+                                                    <polyline points="12 6 12 12 16 14" />
+                                                </svg>
+                                                <span>History</span>
+                                            </button>
                                         </div>
+                                        <div class="soap-history-panel hidden" id="soapHistoryS"></div>
                                     </div>
 
                                     <!-- Objective -->
@@ -424,6 +546,15 @@
                                                 </svg>
                                                 <span>Edit</span>
                                             </button>
+                                            <button class="soap-reject-btn" data-section="objective"
+                                                title="Reject this section">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" width="14" height="14">
+                                                    <line x1="18" y1="6" x2="6" y2="18" />
+                                                    <line x1="6" y1="6" x2="18" y2="18" />
+                                                </svg>
+                                                <span>Reject</span>
+                                            </button>
                                             <button class="soap-approve-btn" data-section="objective"
                                                 title="Approve this section">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -432,7 +563,17 @@
                                                 </svg>
                                                 <span>Approve</span>
                                             </button>
+                                            <button class="soap-history-toggle" data-section="objective"
+                                                title="View edit history">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" width="14" height="14">
+                                                    <circle cx="12" cy="12" r="10" />
+                                                    <polyline points="12 6 12 12 16 14" />
+                                                </svg>
+                                                <span>History</span>
+                                            </button>
                                         </div>
+                                        <div class="soap-history-panel hidden" id="soapHistoryO"></div>
                                     </div>
 
                                     <!-- Assessment -->
@@ -455,6 +596,15 @@
                                                 </svg>
                                                 <span>Edit</span>
                                             </button>
+                                            <button class="soap-reject-btn" data-section="assessment"
+                                                title="Reject this section">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" width="14" height="14">
+                                                    <line x1="18" y1="6" x2="6" y2="18" />
+                                                    <line x1="6" y1="6" x2="18" y2="18" />
+                                                </svg>
+                                                <span>Reject</span>
+                                            </button>
                                             <button class="soap-approve-btn" data-section="assessment"
                                                 title="Approve this section">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -463,7 +613,17 @@
                                                 </svg>
                                                 <span>Approve</span>
                                             </button>
+                                            <button class="soap-history-toggle" data-section="assessment"
+                                                title="View edit history">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" width="14" height="14">
+                                                    <circle cx="12" cy="12" r="10" />
+                                                    <polyline points="12 6 12 12 16 14" />
+                                                </svg>
+                                                <span>History</span>
+                                            </button>
                                         </div>
+                                        <div class="soap-history-panel hidden" id="soapHistoryA"></div>
                                     </div>
 
                                     <!-- Plan -->
@@ -485,6 +645,15 @@
                                                 </svg>
                                                 <span>Edit</span>
                                             </button>
+                                            <button class="soap-reject-btn" data-section="plan"
+                                                title="Reject this section">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" width="14" height="14">
+                                                    <line x1="18" y1="6" x2="6" y2="18" />
+                                                    <line x1="6" y1="6" x2="18" y2="18" />
+                                                </svg>
+                                                <span>Reject</span>
+                                            </button>
                                             <button class="soap-approve-btn" data-section="plan"
                                                 title="Approve this section">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -493,7 +662,17 @@
                                                 </svg>
                                                 <span>Approve</span>
                                             </button>
+                                            <button class="soap-history-toggle" data-section="plan"
+                                                title="View edit history">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" width="14" height="14">
+                                                    <circle cx="12" cy="12" r="10" />
+                                                    <polyline points="12 6 12 12 16 14" />
+                                                </svg>
+                                                <span>History</span>
+                                            </button>
                                         </div>
+                                        <div class="soap-history-panel hidden" id="soapHistoryP"></div>
                                     </div>
 
                                     <!-- AI Suggestion Notice -->
@@ -545,6 +724,14 @@
                             <div class="theme-card" data-theme="midnight">
                                 <div class="theme-preview midnight"></div>
                                 <span>Midnight Void</span>
+                            </div>
+                            <div class="theme-card" data-theme="light">
+                                <div class="theme-preview light"></div>
+                                <span>Clinical Light</span>
+                            </div>
+                            <div class="theme-card" data-theme="aurora">
+                                <div class="theme-preview aurora"></div>
+                                <span>Aurora Dusk</span>
                             </div>
                         </div>
                     </div>
