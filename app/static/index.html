@@ -228,6 +228,50 @@
                             rows="3"></textarea>
                     </div>
 
+                    <!-- Image Upload Section -->
+                    <div class="image-upload-card" id="imageUploadCard">
+                        <div class="divider-line">
+                            <span>OR UPLOAD IMAGE</span>
+                        </div>
+
+                        <div class="image-drop-zone" id="imageDropZone">
+                            <div class="drop-zone-content" id="dropZoneContent">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                    <polyline points="17 8 12 3 7 8" />
+                                    <line x1="12" y1="3" x2="12" y2="15" />
+                                </svg>
+                                <p>Drag and drop a medical image<br><span>or click to browse (JPEG, PNG)</span></p>
+                            </div>
+
+                            <!-- Image Preview Area -->
+                            <div class="image-preview hidden" id="imagePreviewContainer">
+                                <div class="preview-wrapper">
+                                    <img id="imagePreview" src="" alt="Selected image">
+                                    <button class="remove-image-btn" id="removeImageBtn" title="Remove image">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <line x1="18" y1="6" x2="6" y2="18" />
+                                            <line x1="6" y1="6" x2="18" y2="18" />
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="image-details">
+                                    <p class="filename" id="imageFilename">image.jpg</p>
+                                    <p class="filesize" id="imageFilesize">2.4 MB</p>
+                                </div>
+                            </div>
+
+                            <!-- Loading State -->
+                            <div class="image-analyzing hidden" id="imageAnalyzingState">
+                                <div class="spinner small"></div>
+                                <p>Analyzing image...</p>
+                            </div>
+
+                            <input type="file" id="imageFileInput" class="file-input-hidden"
+                                accept="image/jpeg, image/png, image/webp" />
+                        </div>
+                    </div>
+
                     <!-- Action Cards -->
                     <div class="action-cards">
                         <div class="action-card">
@@ -467,6 +511,59 @@
                                         </button>
                                     </div>
                                     <div class="soap-history-panel hidden" id="soapHistoryCD"></div>
+                                </div>
+
+                                <!-- Visual Inspection (Images) -->
+                                <div class="soap-section-card hidden" id="imageFindingsCard"
+                                    data-section="visual_findings">
+                                    <div class="soap-card-header">
+                                        <span class="soap-label soap-label-vi">VI</span>
+                                        <h5>Visual Inspection</h5>
+                                        <span class="soap-status badge warning" id="soapStatusVI">Pending Review</span>
+                                    </div>
+                                    <div class="soap-card-body" id="visualFindings" contenteditable="false"></div>
+                                    <div class="image-findings-thumbnail-container"
+                                        id="imageFindingsThumbnailContainer">
+                                        <!-- Thumbnail populated dynamically -->
+                                    </div>
+                                    <div class="soap-card-actions">
+                                        <button class="soap-edit-btn" data-section="visual_findings"
+                                            title="Edit this section">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                width="14" height="14">
+                                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                            </svg>
+                                            <span>Edit</span>
+                                        </button>
+                                        <button class="soap-reject-btn" data-section="visual_findings"
+                                            title="Reject this section">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                width="14" height="14">
+                                                <line x1="18" y1="6" x2="6" y2="18" />
+                                                <line x1="6" y1="6" x2="18" y2="18" />
+                                            </svg>
+                                            <span>Reject</span>
+                                        </button>
+                                        <button class="soap-approve-btn" data-section="visual_findings"
+                                            title="Approve this section">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                width="14" height="14">
+                                                <polyline points="20 6 9 17 4 12" />
+                                            </svg>
+                                            <span>Approve</span>
+                                        </button>
+                                        <button class="soap-history-toggle" data-section="visual_findings"
+                                            title="View edit history">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                width="14" height="14">
+                                                <circle cx="12" cy="12" r="10" />
+                                                <polyline points="12 6 12 12 16 14" />
+                                            </svg>
+                                            <span>History</span>
+                                        </button>
+                                    </div>
+                                    <div class="soap-history-panel hidden" id="soapHistoryVI"></div>
                                 </div>
 
                                 <!-- SOAP Notes — Full (S, O, A, P) -->

@@ -917,6 +917,228 @@ body .action-card {
 }
 
 /* =====================================================
+   IMAGE UPLOAD CARD
+   ===================================================== */
+.image-upload-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-xl);
+    padding: 24px;
+}
+
+.image-drop-zone {
+    width: 100%;
+    min-height: 140px;
+    border: 2px dashed var(--border-color);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(255, 255, 255, 0.02);
+    cursor: pointer;
+    transition: var(--transition);
+    position: relative;
+    overflow: hidden;
+}
+
+.image-drop-zone:hover,
+.image-drop-zone.drag-over {
+    border-color: var(--violet-500);
+    background: rgba(139, 92, 246, 0.05);
+}
+
+.drop-zone-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 12px;
+}
+
+.drop-zone-content svg {
+    width: 32px;
+    height: 32px;
+    color: var(--text-muted);
+}
+
+.image-drop-zone:hover .drop-zone-content svg {
+    color: var(--violet-500);
+}
+
+.drop-zone-content p {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.drop-zone-content p span {
+    font-size: 0.8rem;
+    font-weight: 400;
+    color: var(--text-muted);
+}
+
+.file-input-hidden {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    top: 0;
+    left: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+/* Image Preview */
+.image-preview {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    position: relative;
+    z-index: 2;
+    /* Above file input */
+}
+
+.preview-wrapper {
+    position: relative;
+    width: 64px;
+    height: 64px;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    flex-shrink: 0;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#imagePreview {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.remove-image-btn {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--rose-500);
+    color: white;
+    border: 2px solid var(--bg-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: var(--transition);
+    transform: scale(0.8);
+}
+
+.preview-wrapper:hover .remove-image-btn {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.remove-image-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+.image-details {
+    flex: 1;
+    overflow: hidden;
+}
+
+.image-details .filename {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 4px;
+}
+
+.image-details .filesize {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+/* Analyzing State */
+.image-analyzing {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 16px;
+}
+
+.spinner.small {
+    width: 24px;
+    height: 24px;
+    border-width: 3px;
+}
+
+.image-analyzing p {
+    font-size: 0.85rem;
+    color: var(--violet-500);
+    font-weight: 500;
+    animation: pulse 1.5s infinite;
+}
+
+/* Visual Findings Results Card */
+.soap-label-vi {
+    background: rgba(16, 185, 129, 0.1);
+    color: var(--emerald-500);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.image-findings-thumbnail-container {
+    margin: 0 20px 20px;
+    padding: 12px;
+    background: var(--result-code-bg);
+    border: 1px solid var(--result-border);
+    border-radius: var(--radius-md);
+    display: none;
+}
+
+.image-findings-thumbnail-container.active {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+}
+
+.findings-thumbnail {
+    width: 80px;
+    height: 80px;
+    border-radius: var(--radius-sm);
+    object-fit: cover;
+    border: 2px solid white;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    flex-shrink: 0;
+}
+
+.findings-meta {
+    flex: 1;
+    font-size: 0.85rem;
+}
+
+.findings-meta strong {
+    color: var(--result-text);
+    display: block;
+    margin-bottom: 4px;
+}
+
+.findings-meta span {
+    color: var(--result-detail-text);
+}
+
+/* =====================================================
    ACTION CARDS
    ===================================================== */
 .action-cards {

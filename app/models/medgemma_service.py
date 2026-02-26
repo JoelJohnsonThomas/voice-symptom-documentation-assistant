@@ -8,9 +8,10 @@ All outputs are flagged for mandatory clinician review.
 """
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from typing import Dict, Any
+from transformers import AutoModelForCausalLM, AutoTokenizer, AutoProcessor
+from typing import Dict, Any, Optional
 import json
+import io
 import logging
 
 from app.config import settings
@@ -26,7 +27,11 @@ class MedGemmaService:
         self.device = settings.device
         self.model = None
         self.tokenizer = None
+        self.vision_model = None
+        self.vision_processor = None
         self._load_model()
+        if settings.enable_image_analysis:
+            self._load_vision_model()
     
     def _load_model(self):
         """Load MedGemma model from Hugging Face."""
@@ -72,6 +77,41 @@ class MedGemmaService:
         except Exception as e:
             logger.error(f"Failed to load MedGemma model: {e}")
             raise
+    
+    def _load_vision_model(self):
+        """Load MedGemma multimodal vision model for image analysis."""
+        try:
+            logger.info(f"Loading MedGemma vision model: {settings.medgemma_vision_model}")
+            
+            if settings.enable_gpu and torch.cuda.is_available():
+                dtype = torch.bfloat16
+            else:
+                dtype = torch.float32
+            
+            self.vision_processor = AutoProcessor.from_pretrained(
+                settings.medgemma_vision_model,
+                token=settings.hf_token if settings.hf_token else None
+            )
+            
+            self.vision_model = AutoModelForCausalLM.from_pretrained(
+                settings.medgemma_vision_model,
+                torch_dtype=dtype,
+                device_map="auto" if settings.enable_gpu and torch.cuda.is_available() else None,
+                token=settings.hf_token if settings.hf_token else None,
+                low_cpu_mem_usage=True
+            )
+            
+            if not (settings.enable_gpu and torch.cuda.is_available()):
+                self.vision_model = self.vision_model.to("cpu")
+            
+            self.vision_model.eval()
+            logger.info("MedGemma vision model loaded successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to load vision model: {e}")
+            logger.warning("Image analysis will be unavailable")
+            self.vision_model = None
+            self.vision_processor = None
     
     def _extract_json_from_response(self, text: str) -> str:
         """
@@ -400,7 +440,7 @@ class MedGemmaService:
         
         return True, ""
     
-    def generate_documentation(self, transcript: str) -> Dict[str, Any]:
+    def generate_documentation(self, transcript: str, image_findings: Optional[str] = None) -> Dict[str, Any]:
         """
         Generate structured symptom documentation from transcript.
         
@@ -409,6 +449,7 @@ class MedGemmaService:
         
         Args:
             transcript: Patient's symptom report (text)
+            image_findings: Optional description from image analysis
             
         Returns:
             Dictionary with structured documentation
@@ -417,10 +458,17 @@ class MedGemmaService:
             logger.info("Generating documentation...")
             
             # Import prompt here to avoid circular dependency
-            from app.prompts.documentation_prompts import create_documentation_prompt
+            from app.prompts.documentation_prompts import (
+                create_documentation_prompt,
+                create_documentation_with_image_prompt
+            )
             
-            # Create prompt content
-            prompt_content = create_documentation_prompt(transcript)
+            # Create prompt content — use image-aware prompt if image findings available
+            if image_findings:
+                logger.info("Including image findings in documentation prompt")
+                prompt_content = create_documentation_with_image_prompt(transcript, image_findings)
+            else:
+                prompt_content = create_documentation_prompt(transcript)
             
             # MedGemma 1.5 is a chat model - use chat template
             messages = [
@@ -621,6 +669,110 @@ class MedGemmaService:
     def is_ready(self) -> bool:
         """Check if the model is loaded and ready."""
         return self.model is not None and self.tokenizer is not None
+    
+    def is_vision_ready(self) -> bool:
+        """Check if the vision model is loaded and ready."""
+        return self.vision_model is not None and self.vision_processor is not None
+    
+    def analyze_image(self, image_bytes: bytes) -> Dict[str, Any]:
+        """
+        Analyze an uploaded medical image using MedGemma vision model.
+        
+        COMPLIANCE: Provides DESCRIPTIVE OBSERVATIONS ONLY.
+        Does NOT diagnose or recommend treatments.
+        
+        Args:
+            image_bytes: Raw image file bytes
+            
+        Returns:
+            Dictionary with image analysis results
+        """
+        from PIL import Image
+        from app.prompts.documentation_prompts import create_image_analysis_prompt
+        
+        if not self.is_vision_ready():
+            raise RuntimeError("Vision model not loaded. Image analysis unavailable.")
+        
+        try:
+            logger.info("Analyzing uploaded image...")
+            
+            # Open image from bytes
+            image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            logger.info(f"Image opened: {image.size[0]}x{image.size[1]}")
+            
+            # Create analysis prompt
+            prompt_text = create_image_analysis_prompt()
+            
+            # Build multimodal message for the vision model
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": prompt_text}
+                    ]
+                }
+            ]
+            
+            # Process with AutoProcessor (handles both text + image)
+            inputs = self.vision_processor.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt"
+            ).to(self.vision_model.device)
+            
+            # Generate description
+            with torch.inference_mode():
+                outputs = self.vision_model.generate(
+                    **inputs,
+                    max_new_tokens=512,
+                    do_sample=False,
+                    repetition_penalty=settings.medgemma_repetition_penalty,
+                )
+            
+            # Decode only the generated tokens (skip input)
+            input_len = inputs["input_ids"].shape[1]
+            generated_ids = outputs[0][input_len:]
+            description = self.vision_processor.decode(generated_ids, skip_special_tokens=True)
+            
+            logger.info(f"Image analysis result (length={len(description)}): {description[:200]}...")
+            
+            # Parse structured sections from the description
+            import re
+            body_area = "not specified"
+            observations = "not specified"
+            notable_features = "not specified"
+            
+            body_match = re.search(r'BODY\s*AREA:\s*(.+?)(?=OBSERVATIONS:|$)', description, re.DOTALL | re.IGNORECASE)
+            if body_match:
+                body_area = body_match.group(1).strip()
+            
+            obs_match = re.search(r'OBSERVATIONS:\s*(.+?)(?=NOTABLE\s*FEATURES:|$)', description, re.DOTALL | re.IGNORECASE)
+            if obs_match:
+                observations = obs_match.group(1).strip()
+            
+            feat_match = re.search(r'NOTABLE\s*FEATURES:\s*(.+?)$', description, re.DOTALL | re.IGNORECASE)
+            if feat_match:
+                notable_features = feat_match.group(1).strip()
+            
+            return {
+                "description": description,
+                "body_area": body_area,
+                "observations": observations,
+                "notable_features": notable_features,
+                "visual_findings_text": description,
+                "requires_clinician_review": True,
+                "compliance_notice": (
+                    "Image analysis is DESCRIPTIVE ONLY. "
+                    "All visual findings require clinician verification."
+                )
+            }
+            
+        except Exception as e:
+            logger.error(f"Image analysis failed: {e}")
+            raise
 
 
 # Global instance (singleton pattern)

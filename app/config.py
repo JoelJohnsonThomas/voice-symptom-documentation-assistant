@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     model_cache_dir: str = "/app/models"
     medasr_model: str = "google/medasr"
     medgemma_model: str = "google/medgemma-1.5-4b-it"
+    medgemma_vision_model: str = "google/medgemma-4b-it"
+    
+    # Image Analysis
+    enable_image_analysis: bool = True
+    max_image_size_mb: int = 10
     
     # Device
     device: Literal["cuda", "cpu"] = "cpu"

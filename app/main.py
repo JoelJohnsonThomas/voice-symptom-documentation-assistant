@@ -70,6 +70,7 @@ class TranscriptionResponse(BaseModel):
 
 class DocumentationRequest(BaseModel):
     transcript: str
+    image_findings: Optional[str] = None
 
 
 class DocumentationResponse(BaseModel):
@@ -118,6 +119,7 @@ async def health_check():
             "status": "healthy",
             "medasr_ready": medasr.is_ready(),
             "medgemma_ready": medgemma.is_ready(),
+            "vision_ready": medgemma.is_vision_ready(),
             "device": settings.device,
             "gpu_enabled": settings.enable_gpu
         }
@@ -202,7 +204,10 @@ async def generate_documentation(request: DocumentationRequest):
         
         # Generate documentation
         medgemma = get_medgemma_service()
-        documentation = medgemma.generate_documentation(request.transcript)
+        documentation = medgemma.generate_documentation(
+            request.transcript,
+            image_findings=request.image_findings
+        )
         
         logger.info("Documentation generated successfully")
         
@@ -217,6 +222,70 @@ async def generate_documentation(request: DocumentationRequest):
         
     except Exception as e:
         logger.error(f"Documentation generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Image analysis endpoint
+@app.post("/api/analyze-image")
+async def analyze_image(image: UploadFile = File(...)):
+    """
+    Analyze an uploaded medical image using MedGemma vision.
+    
+    COMPLIANCE: Produces DESCRIPTIVE observations only.
+    Does NOT diagnose or recommend treatment.
+    
+    Args:
+        image: Image file (JPEG, PNG, WebP)
+        
+    Returns:
+        Image analysis results with visual findings
+    """
+    try:
+        # Validate file type
+        allowed_types = {'image/jpeg', 'image/png', 'image/webp', 'image/jpg'}
+        if image.content_type and image.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file type: {image.content_type}. Allowed: JPEG, PNG, WebP"
+            )
+        
+        # Read and validate size
+        image_bytes = await image.read()
+        max_bytes = settings.max_image_size_mb * 1024 * 1024
+        if len(image_bytes) > max_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Image too large ({len(image_bytes) / (1024*1024):.1f}MB). Maximum: {settings.max_image_size_mb}MB"
+            )
+        
+        logger.info(f"Analyzing image: {image.filename} ({len(image_bytes)} bytes)")
+        
+        # Check vision model availability
+        medgemma = get_medgemma_service()
+        if not medgemma.is_vision_ready():
+            raise HTTPException(
+                status_code=503,
+                detail="Vision model not available. Image analysis is disabled or failed to load."
+            )
+        
+        # Analyze image
+        analysis = medgemma.analyze_image(image_bytes)
+        
+        logger.info("Image analysis completed successfully")
+        
+        return JSONResponse(content={
+            "image_analysis": analysis,
+            "requires_clinician_review": True,
+            "compliance_notice": (
+                "Image analysis is descriptive only. "
+                "All visual findings must be verified by a qualified healthcare professional."
+            )
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Image analysis failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

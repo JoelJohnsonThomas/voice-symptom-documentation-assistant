@@ -114,3 +114,74 @@ Format your response exactly as:
 OBJECTIVE: [your objective paragraph]
 ASSESSMENT: [your assessment paragraph]
 PLAN: [your plan paragraph]"""
+
+
+def create_image_analysis_prompt() -> str:
+    """
+    Create a prompt for analyzing a medical image.
+    
+    COMPLIANCE: This produces DESCRIPTIVE observations only.
+    It does NOT diagnose conditions or recommend treatments.
+    
+    Returns:
+        Formatted prompt string for image analysis
+    """
+    return """You are a medical documentation assistant. Describe this clinical image
+for administrative documentation purposes.
+
+COMPLIANCE: Provide DESCRIPTIVE OBSERVATIONS ONLY. Do NOT diagnose conditions,
+suggest treatments, or make clinical assessments. All findings require clinician review.
+
+Describe the following:
+1. Body area visible (e.g., forearm, back, face)
+2. Visual observations (color, texture, shape, size, distribution)
+3. Any notable features (borders, symmetry, patterns, swelling, discoloration)
+
+Use plain, clinical language. Be factual and objective.
+Format your response as:
+
+BODY AREA: [area observed]
+OBSERVATIONS: [detailed visual description]
+NOTABLE FEATURES: [any distinguishing characteristics]"""
+
+
+def create_documentation_with_image_prompt(transcript: str, image_description: str) -> str:
+    """
+    Create a documentation prompt that includes both transcript and image findings.
+    
+    Args:
+        transcript: Patient's symptom report
+        image_description: AI-generated description of uploaded image
+        
+    Returns:
+        Formatted prompt string incorporating both text and visual data
+    """
+    clean_transcript = transcript.replace("</s>", "").replace("<s>", "").strip().lstrip('.')
+    
+    return f"""Analyze this patient statement AND accompanying image findings for medical documentation.
+
+Patient Statement: "{clean_transcript}"
+
+Image Findings (from uploaded photo):
+{image_description}
+
+Extract ONLY information the patient explicitly stated OR that is visible in the image:
+
+1. Main symptoms (comma-separated list, include ALL symptom options if patient is uncertain)
+2. Location (body part affected, include any radiation pattern AND image location)
+3. Quality/Character (how the symptom feels: sharp, dull, burning, throbbing, aching, pressure, etc.)
+4. Duration/timing (when it started or how long, e.g. "2 days", "since Monday", "chronic")
+5. Severity (if patient describes intensity: mild, moderate, severe, or numeric scale)
+6. Associated symptoms (other symptoms mentioned alongside the main complaint)
+7. Visual findings summary (brief summary of what the uploaded image shows)
+8. Brief SOAP Subjective note (1-2 sentences summarizing the history of present illness,
+   incorporating both verbal report and visual findings)
+
+Important extraction rules:
+- PRESERVE PATIENT UNCERTAINTY: If patient says "not sure if", "maybe", "or", "could be", include ALL options mentioned
+- For radiation patterns (e.g. "radiating to", "spreading to", "goes down to"), include in Location field
+- Include uncertainty language in SOAP note: "Patient reports possible...", "Patient uncertain between..."
+- Integrate image findings naturally: "Patient presents with [verbal symptoms]. Uploaded image shows [visual findings]."
+- Do not add symptoms or details not stated by patient or visible in the image
+- Use "not specified" for fields without explicit information
+- Use plain English, no markdown formatting."""
