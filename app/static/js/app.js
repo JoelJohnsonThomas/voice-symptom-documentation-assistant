@@ -302,7 +302,7 @@ function hideLiveTranscript() {
 // =====================================================
 
 // Theme cycle order for header toggle
-const THEME_ORDER = ['glass', 'light', 'neon', 'midnight', 'aurora'];
+const THEME_ORDER = ['glass', 'light', 'neon', 'midnight', 'aurora', 'high-contrast'];
 
 // Meta theme-color mapping per theme
 const THEME_META_COLORS = {
@@ -310,7 +310,8 @@ const THEME_META_COLORS = {
     neon: '#050505',
     midnight: '#000000',
     light: '#f0f4f8',
-    aurora: '#141020'
+    aurora: '#141020',
+    'high-contrast': '#000000'
 };
 
 function setupSettings() {
@@ -345,10 +346,17 @@ function setupSettings() {
     if (soundToggle) soundToggle.checked = savedSound;
 
     themeCards.forEach(card => {
-        card.addEventListener('click', () => {
+        const activateTheme = () => {
             const theme = card.dataset.theme;
             applyTheme(theme);
             saveSettings('voxdoc_theme', theme);
+        };
+        card.addEventListener('click', activateTheme);
+        card.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                activateTheme();
+            }
         });
     });
 
@@ -539,12 +547,20 @@ function setupNavigation() {
         closeSidebar(); // Auto close on mobile
     }
 
+    function handleNavKeydown(e, actionObj) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            actionObj.click();
+        }
+    }
+
     if (dashboardBtn) {
         dashboardBtn.addEventListener('click', () => {
             setActiveTab(dashboardBtn);
             if (contentView) contentView.classList.remove('hidden');
             if (settingsView) settingsView.classList.add('hidden');
         });
+        dashboardBtn.addEventListener('keydown', (e) => handleNavKeydown(e, dashboardBtn));
     }
 
     if (settingsBtn) {
@@ -555,6 +571,7 @@ function setupNavigation() {
             // Re-draw graph if needed
             setupNeuralGraph();
         });
+        settingsBtn.addEventListener('keydown', (e) => handleNavKeydown(e, settingsBtn));
     }
 
     // History placeholder
@@ -563,17 +580,26 @@ function setupNavigation() {
             setActiveTab(historyBtn);
             alert('History feature coming soon in v2.0');
         });
+        historyBtn.addEventListener('keydown', (e) => handleNavKeydown(e, historyBtn));
     }
 }
 
 function openSidebar() {
     elements.sidebar?.classList.add('open');
     elements.sidebarOverlay?.classList.add('active');
+    elements.openSidebarBtn?.setAttribute('aria-expanded', 'true');
+    // Focus management for accessibility
+    document.querySelector('[data-tab="dashboard"]')?.focus();
 }
 
 function closeSidebar() {
     elements.sidebar?.classList.remove('open');
     elements.sidebarOverlay?.classList.remove('active');
+    elements.openSidebarBtn?.setAttribute('aria-expanded', 'false');
+    // Return focus if on mobile
+    if (window.innerWidth < 1024) {
+        elements.openSidebarBtn?.focus();
+    }
 }
 
 // =====================================================
@@ -640,6 +666,7 @@ async function startRecording() {
 
         // UI Updates
         elements.recordBtn?.classList.add('recording');
+        elements.recordBtn?.setAttribute('aria-pressed', 'true');
         elements.micIcon?.classList.add('hidden');
         elements.stopIcon?.classList.remove('hidden');
         elements.waveformContainer?.classList.add('recording');
@@ -670,6 +697,7 @@ function stopRecording() {
 
         // UI Updates
         elements.recordBtn?.classList.remove('recording');
+        elements.recordBtn?.setAttribute('aria-pressed', 'false');
         elements.micIcon?.classList.remove('hidden');
         elements.stopIcon?.classList.add('hidden');
         elements.waveformContainer?.classList.remove('recording');
@@ -728,6 +756,16 @@ function setupImageUpload() {
         // Prevent click if clicking the remove button
         if (!e.target.closest('.remove-image-btn')) {
             elements.imageFileInput.click();
+        }
+    });
+
+    // Keyboard space/enter to open file dialog
+    elements.imageDropZone.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            if (!e.target.closest('.remove-image-btn')) {
+                elements.imageFileInput.click();
+            }
         }
     });
 

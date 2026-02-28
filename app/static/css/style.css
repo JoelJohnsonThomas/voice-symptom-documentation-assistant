@@ -119,6 +119,82 @@
     --bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
+/* High Contrast Theme (WCAG 2.1 AAA) */
+[data-theme="high-contrast"] {
+    /* Pure Black & White Foundation */
+    --bg-primary: #000000;
+    --bg-secondary: #000000;
+    --bg-card: #000000;
+    --bg-sidebar: #000000;
+
+    /* High Visibility Accents (Yellow/Cyan) */
+    --violet-500: #ffff00;
+    /* Yellow */
+    --violet-600: #ffff00;
+    --violet-glow: transparent;
+
+    --indigo-500: #00ffff;
+    /* Cyan */
+    --indigo-600: #00ffff;
+
+    --cyan-500: #00ffff;
+    --cyan-glow: transparent;
+
+    --rose-500: #ff00ff;
+    /* Magenta */
+    --rose-glow: transparent;
+
+    --emerald-500: #00ff00;
+    /* Bright Green */
+    --amber-500: #ffff00;
+
+    /* Max Contrast Text */
+    --text-primary: #ffffff;
+    --text-secondary: #ffffff;
+    --text-muted: #e0e0e0;
+
+    /* Crisp Borders */
+    --border-color: #ffffff;
+    --border-hover: #ffff00;
+
+    /* Transcript / Content Area Colors */
+    --transcript-bg: #000000;
+    --transcript-header-bg: #000000;
+    --transcript-header-border: #ffffff;
+    --transcript-content-bg: #000000;
+    --transcript-text: #ffffff;
+    --transcript-muted: #e0e0e0;
+    --transcript-shadow: none;
+
+    /* Result Section Colors */
+    --result-bg: #000000;
+    --result-border: #ffffff;
+    --result-heading: #ffffff;
+    --result-text: #ffffff;
+    --result-detail-text: #ffffff;
+    --result-detail-border: #ffffff;
+    --result-code-bg: #000000;
+    --result-soap-text: #ffffff;
+
+    /* Action Button Colors */
+    --action-btn-bg: transparent;
+    --action-btn-hover-bg: #ffff00;
+    --action-btn-color: #ffffff;
+    --action-btn-hover-color: #000000;
+
+    /* Review Notice */
+    --notice-bg: #000000;
+    --notice-border: #ffff00;
+    --notice-strong: #ffff00;
+    --notice-text: #ffffff;
+
+    /* Main Header */
+    --header-bg: #000000;
+
+    /* Disable Shadows for clarity */
+    box-shadow: none !important;
+}
+
 /* Utilities */
 .hidden {
     display: none !important;
@@ -135,6 +211,18 @@ body {
     color: var(--text-secondary);
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
+}
+
+/* Global Focus Indicator for Accessibility */
+:focus-visible {
+    outline: 3px solid var(--violet-500) !important;
+    outline-offset: 2px !important;
+    transition: outline-color 0.2s ease;
+}
+
+[data-theme="high-contrast"] :focus-visible {
+    outline: 4px solid var(--violet-500) !important;
+    outline-offset: 4px !important;
 }
 
 /* Smooth theme transitions */

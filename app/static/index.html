@@ -96,7 +96,7 @@
                     </div>
                 </div>
                 <!-- Recent Documents List -->
-                <div class="recent-docs" id="recentDocsList">
+                <div class="recent-docs" id="recentDocsList" aria-live="polite">
                     <!-- Populated dynamically from localStorage -->
                 </div>
             </nav>
@@ -127,8 +127,9 @@
             <!-- Header -->
             <header class="main-header">
                 <div class="header-left">
-                    <button id="openSidebar" class="menu-btn">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <button id="openSidebar" class="menu-btn" aria-label="Open sidebar menu" aria-expanded="false"
+                        aria-controls="sidebar">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                             <line x1="3" y1="12" x2="21" y2="12" />
                             <line x1="3" y1="6" x2="21" y2="6" />
                             <line x1="3" y1="18" x2="21" y2="18" />
@@ -141,9 +142,9 @@
                 </div>
                 <div class="header-right">
                     <!-- Theme Toggle Button -->
-                    <button id="themeToggle" class="theme-toggle-btn" title="Switch theme">
+                    <button id="themeToggle" class="theme-toggle-btn" aria-label="Switch theme mode">
                         <svg class="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
+                            stroke-width="2" aria-hidden="true">
                             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
                         </svg>
                         <svg class="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -184,7 +185,7 @@
                         <div class="voice-card-content">
                             <div class="voice-card-header">
                                 <h2>Voice Intake</h2>
-                                <p id="voiceStatus">Tap microphone to start recording</p>
+                                <p id="voiceStatus" aria-live="polite">Tap microphone to start recording</p>
                             </div>
 
                             <!-- Waveform Visualizer -->
@@ -214,15 +215,16 @@
                             <!-- Record Button -->
                             <div class="record-btn-wrapper">
                                 <div id="recordRipple" class="record-ripple"></div>
-                                <button id="recordBtn" class="record-btn">
+                                <button id="recordBtn" class="record-btn" aria-label="Start recording voice intake">
                                     <svg id="micIcon" class="mic-icon" viewBox="0 0 24 24" fill="none"
-                                        stroke="currentColor" stroke-width="2">
+                                        stroke="currentColor" stroke-width="2" aria-hidden="true">
                                         <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
                                         <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
                                         <line x1="12" y1="19" x2="12" y2="23" />
                                         <line x1="8" y1="23" x2="16" y2="23" />
                                     </svg>
-                                    <svg id="stopIcon" class="stop-icon hidden" viewBox="0 0 24 24" fill="currentColor">
+                                    <svg id="stopIcon" class="stop-icon hidden" viewBox="0 0 24 24" fill="currentColor"
+                                        aria-hidden="true">
                                         <rect x="6" y="6" width="12" height="12" rx="2" />
                                     </svg>
                                 </button>
@@ -238,11 +240,11 @@
                     <!-- Text Input Alternative -->
                     <div class="text-input-card">
                         <div class="divider-line">
-                            <span>OR TYPE SYMPTOMS</span>
+                            <label for="textInput"><span>OR TYPE SYMPTOMS</span></label>
                         </div>
                         <textarea id="textInput" class="text-input"
                             placeholder="Enter patient symptoms here (e.g., 'Sore throat for 48 hours with mild fever')"
-                            rows="3"></textarea>
+                            rows="3" aria-label="Manual symptom text entry"></textarea>
                     </div>
 
                     <!-- Image Upload Section -->
@@ -251,9 +253,11 @@
                             <span>OR UPLOAD IMAGE</span>
                         </div>
 
-                        <div class="image-drop-zone" id="imageDropZone">
+                        <div class="image-drop-zone" id="imageDropZone" role="button" tabindex="0"
+                            aria-label="Upload visual patient findings image">
                             <div class="drop-zone-content" id="dropZoneContent">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                    aria-hidden="true">
                                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                                     <polyline points="17 8 12 3 7 8" />
                                     <line x1="12" y1="3" x2="12" y2="15" />
@@ -264,9 +268,11 @@
                             <!-- Image Preview Area -->
                             <div class="image-preview hidden" id="imagePreviewContainer">
                                 <div class="preview-wrapper">
-                                    <img id="imagePreview" src="" alt="Selected image">
-                                    <button class="remove-image-btn" id="removeImageBtn" title="Remove image">
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <img id="imagePreview" src="" alt="Selected visual findings image">
+                                    <button class="remove-image-btn" id="removeImageBtn"
+                                        aria-label="Remove uploaded image">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                            aria-hidden="true">
                                             <line x1="18" y1="6" x2="6" y2="18" />
                                             <line x1="6" y1="6" x2="18" y2="18" />
                                         </svg>
@@ -285,7 +291,7 @@
                             </div>
 
                             <input type="file" id="imageFileInput" class="file-input-hidden"
-                                accept="image/jpeg, image/png, image/webp" />
+                                accept="image/jpeg, image/png, image/webp" aria-hidden="true" tabindex="-1" />
                         </div>
                     </div>
 
@@ -340,16 +346,18 @@
                                 <h3 id="transcriptTitle">Live Transcript</h3>
                             </div>
                             <div class="export-actions">
-                                <button class="action-btn" id="exportBtn" title="Download JSON">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <button class="action-btn" id="exportBtn" aria-label="Download JSON format">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                        aria-hidden="true">
                                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                                         <polyline points="7 10 12 15 17 10" />
                                         <line x1="12" y1="15" x2="12" y2="3" />
                                     </svg>
                                     <span>JSON</span>
                                 </button>
-                                <button class="action-btn" id="exportPdfBtn" title="Download Print-Ready PDF">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <button class="action-btn" id="exportPdfBtn" aria-label="Download Print-Ready PDF">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                        aria-hidden="true">
                                         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                                         <polyline points="14 2 14 8 20 8" />
                                         <line x1="16" y1="13" x2="8" y2="13" />
@@ -358,8 +366,10 @@
                                     </svg>
                                     <span>PDF</span>
                                 </button>
-                                <button class="action-btn primary" id="copyBtn" title="Copy to Clipboard">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <button class="action-btn primary" id="copyBtn"
+                                    aria-label="Copy entire note to clipboard">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                        aria-hidden="true">
                                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
                                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
                                     </svg>
@@ -383,15 +393,15 @@
 
                             <!-- Live Transcript State (shown during recording) -->
                             <div id="liveTranscriptState" class="live-transcript-state hidden">
-                                <div class="live-badge">
+                                <div class="live-badge" aria-hidden="true">
                                     <span class="live-dot"></span>
                                     <span>LIVE</span>
                                 </div>
-                                <div id="liveTranscriptText" class="live-transcript-text">
+                                <div id="liveTranscriptText" class="live-transcript-text" aria-live="polite">
                                     <span class="live-placeholder">Listening... speak clearly into your
                                         microphone</span>
                                 </div>
-                                <div class="live-cursor"></div>
+                                <div class="live-cursor" aria-hidden="true"></div>
                             </div>
 
                             <!-- Loading State -->
@@ -401,7 +411,7 @@
                             </div>
 
                             <!-- Results Container -->
-                            <div id="resultsContainer" class="results-container hidden">
+                            <div id="resultsContainer" class="results-container hidden" aria-live="polite">
                                 <!-- Clinician Review Notice -->
                                 <div class="review-notice">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -447,7 +457,8 @@
                                 </div>
 
                                 <!-- Chief Complaint -->
-                                <div class="soap-section-card" data-section="chief_complaint">
+                                <div class="soap-section-card" data-section="chief_complaint" role="region"
+                                    aria-label="Chief Complaint Section">
                                     <div class="soap-card-header">
                                         <span class="soap-label soap-label-cc">CC</span>
                                         <h5>Chief Complaint</h5>
@@ -456,35 +467,35 @@
                                     <div class="soap-card-body" id="chiefComplaint" contenteditable="false"></div>
                                     <div class="soap-card-actions">
                                         <button class="soap-edit-btn" data-section="chief_complaint"
-                                            title="Edit this section">
+                                            aria-label="Edit Chief Complaint">
                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                width="14" height="14">
+                                                width="14" height="14" aria-hidden="true">
                                                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                                                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                                             </svg>
                                             <span>Edit</span>
                                         </button>
                                         <button class="soap-reject-btn" data-section="chief_complaint"
-                                            title="Reject this section">
+                                            aria-label="Reject Chief Complaint">
                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                width="14" height="14">
+                                                width="14" height="14" aria-hidden="true">
                                                 <line x1="18" y1="6" x2="6" y2="18" />
                                                 <line x1="6" y1="6" x2="18" y2="18" />
                                             </svg>
                                             <span>Reject</span>
                                         </button>
                                         <button class="soap-approve-btn" data-section="chief_complaint"
-                                            title="Approve this section">
+                                            aria-label="Approve Chief Complaint">
                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                width="14" height="14">
+                                                width="14" height="14" aria-hidden="true">
                                                 <polyline points="20 6 9 17 4 12" />
                                             </svg>
                                             <span>Approve</span>
                                         </button>
                                         <button class="soap-history-toggle" data-section="chief_complaint"
-                                            title="View edit history">
+                                            aria-label="View Chief Complaint History" aria-expanded="false">
                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                width="14" height="14">
+                                                width="14" height="14" aria-hidden="true">
                                                 <circle cx="12" cy="12" r="10" />
                                                 <polyline points="12 6 12 12 16 14" />
                                             </svg>
@@ -495,7 +506,8 @@
                                 </div>
 
                                 <!-- Clinical Details -->
-                                <div class="soap-section-card" data-section="clinical_details">
+                                <div class="soap-section-card" data-section="clinical_details" role="region"
+                                    aria-label="Clinical Details Section">
                                     <div class="soap-card-header">
                                         <span class="soap-label soap-label-cd">CD</span>
                                         <h5>Clinical Details</h5>
@@ -504,35 +516,35 @@
                                     <div class="soap-card-body" id="symptomDetails" contenteditable="false"></div>
                                     <div class="soap-card-actions">
                                         <button class="soap-edit-btn" data-section="clinical_details"
-                                            title="Edit this section">
+                                            aria-label="Edit Clinical Details">
                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                width="14" height="14">
+                                                width="14" height="14" aria-hidden="true">
                                                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                                                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                                             </svg>
                                             <span>Edit</span>
                                         </button>
                                         <button class="soap-reject-btn" data-section="clinical_details"
-                                            title="Reject this section">
+                                            aria-label="Reject Clinical Details">
                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                width="14" height="14">
+                                                width="14" height="14" aria-hidden="true">
                                                 <line x1="18" y1="6" x2="6" y2="18" />
                                                 <line x1="6" y1="6" x2="18" y2="18" />
                                             </svg>
                                             <span>Reject</span>
                                         </button>
                                         <button class="soap-approve-btn" data-section="clinical_details"
-                                            title="Approve this section">
+                                            aria-label="Approve Clinical Details">
                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                width="14" height="14">
+                                                width="14" height="14" aria-hidden="true">
                                                 <polyline points="20 6 9 17 4 12" />
                                             </svg>
                                             <span>Approve</span>
                                         </button>
                                         <button class="soap-history-toggle" data-section="clinical_details"
-                                            title="View edit history">
+                                            aria-label="View Clinical Details History" aria-expanded="false">
                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                width="14" height="14">
+                                                width="14" height="14" aria-hidden="true">
                                                 <circle cx="12" cy="12" r="10" />
                                                 <polyline points="12 6 12 12 16 14" />
                                             </svg>
@@ -544,7 +556,7 @@
 
                                 <!-- Visual Inspection (Images) -->
                                 <div class="soap-section-card hidden" id="imageFindingsCard"
-                                    data-section="visual_findings">
+                                    data-section="visual_findings" role="region" aria-label="Visual Findings Section">
                                     <div class="soap-card-header">
                                         <span class="soap-label soap-label-vi">VI</span>
                                         <h5>Visual Inspection</h5>
@@ -557,35 +569,35 @@
                                     </div>
                                     <div class="soap-card-actions">
                                         <button class="soap-edit-btn" data-section="visual_findings"
-                                            title="Edit this section">
+                                            aria-label="Edit Visual Findings">
                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                width="14" height="14">
+                                                width="14" height="14" aria-hidden="true">
                                                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                                                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                                             </svg>
                                             <span>Edit</span>
                                         </button>
                                         <button class="soap-reject-btn" data-section="visual_findings"
-                                            title="Reject this section">
+                                            aria-label="Reject Visual Findings">
                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                width="14" height="14">
+                                                width="14" height="14" aria-hidden="true">
                                                 <line x1="18" y1="6" x2="6" y2="18" />
                                                 <line x1="6" y1="6" x2="18" y2="18" />
                                             </svg>
                                             <span>Reject</span>
                                         </button>
                                         <button class="soap-approve-btn" data-section="visual_findings"
-                                            title="Approve this section">
+                                            aria-label="Approve Visual Findings">
                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                width="14" height="14">
+                                                width="14" height="14" aria-hidden="true">
                                                 <polyline points="20 6 9 17 4 12" />
                                             </svg>
                                             <span>Approve</span>
                                         </button>
                                         <button class="soap-history-toggle" data-section="visual_findings"
-                                            title="View edit history">
+                                            aria-label="View Visual Findings History" aria-expanded="false">
                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                                                width="14" height="14">
+                                                width="14" height="14" aria-hidden="true">
                                                 <circle cx="12" cy="12" r="10" />
                                                 <polyline points="12 6 12 12 16 14" />
                                             </svg>
@@ -603,7 +615,8 @@
                                     </div>
 
                                     <!-- Subjective -->
-                                    <div class="soap-section-card" data-section="subjective">
+                                    <div class="soap-section-card" data-section="subjective" role="region"
+                                        aria-label="Subjective Section">
                                         <div class="soap-card-header">
                                             <span class="soap-label soap-label-s">S</span>
                                             <h5>Subjective</h5>
@@ -613,9 +626,9 @@
                                         <div class="soap-card-body" id="soapS" contenteditable="false"></div>
                                         <div class="soap-card-actions">
                                             <button class="soap-edit-btn" data-section="subjective"
-                                                title="Edit this section">
+                                                aria-label="Edit Subjective Section">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                                    stroke-width="2" width="14" height="14">
+                                                    stroke-width="2" width="14" height="14" aria-hidden="true">
                                                     <path
                                                         d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                                                     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
@@ -623,26 +636,26 @@
                                                 <span>Edit</span>
                                             </button>
                                             <button class="soap-reject-btn" data-section="subjective"
-                                                title="Reject this section">
+                                                aria-label="Reject Subjective Section">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                                    stroke-width="2" width="14" height="14">
+                                                    stroke-width="2" width="14" height="14" aria-hidden="true">
                                                     <line x1="18" y1="6" x2="6" y2="18" />
                                                     <line x1="6" y1="6" x2="18" y2="18" />
                                                 </svg>
                                                 <span>Reject</span>
                                             </button>
                                             <button class="soap-approve-btn" data-section="subjective"
-                                                title="Approve this section">
+                                                aria-label="Approve Subjective Section">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                                    stroke-width="2" width="14" height="14">
+                                                    stroke-width="2" width="14" height="14" aria-hidden="true">
                                                     <polyline points="20 6 9 17 4 12" />
                                                 </svg>
                                                 <span>Approve</span>
                                             </button>
                                             <button class="soap-history-toggle" data-section="subjective"
-                                                title="View edit history">
+                                                aria-label="View Subjective Section History" aria-expanded="false">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                                    stroke-width="2" width="14" height="14">
+                                                    stroke-width="2" width="14" height="14" aria-hidden="true">
                                                     <circle cx="12" cy="12" r="10" />
                                                     <polyline points="12 6 12 12 16 14" />
                                                 </svg>
@@ -653,7 +666,8 @@
                                     </div>
 
                                     <!-- Objective -->
-                                    <div class="soap-section-card" data-section="objective">
+                                    <div class="soap-section-card" data-section="objective" role="region"
+                                        aria-label="Objective Section">
                                         <div class="soap-card-header">
                                             <span class="soap-label soap-label-o">O</span>
                                             <h5>Objective</h5>
@@ -663,9 +677,9 @@
                                         <div class="soap-card-body" id="soapO" contenteditable="false"></div>
                                         <div class="soap-card-actions">
                                             <button class="soap-edit-btn" data-section="objective"
-                                                title="Edit this section">
+                                                aria-label="Edit Objective Section">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                                    stroke-width="2" width="14" height="14">
+                                                    stroke-width="2" width="14" height="14" aria-hidden="true">
                                                     <path
                                                         d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                                                     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
@@ -673,26 +687,26 @@
                                                 <span>Edit</span>
                                             </button>
                                             <button class="soap-reject-btn" data-section="objective"
-                                                title="Reject this section">
+                                                aria-label="Reject Objective Section">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                                    stroke-width="2" width="14" height="14">
+                                                    stroke-width="2" width="14" height="14" aria-hidden="true">
                                                     <line x1="18" y1="6" x2="6" y2="18" />
                                                     <line x1="6" y1="6" x2="18" y2="18" />
                                                 </svg>
                                                 <span>Reject</span>
                                             </button>
                                             <button class="soap-approve-btn" data-section="objective"
-                                                title="Approve this section">
+                                                aria-label="Approve Objective Section">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                                    stroke-width="2" width="14" height="14">
+                                                    stroke-width="2" width="14" height="14" aria-hidden="true">
                                                     <polyline points="20 6 9 17 4 12" />
                                                 </svg>
                                                 <span>Approve</span>
                                             </button>
                                             <button class="soap-history-toggle" data-section="objective"
-                                                title="View edit history">
+                                                aria-label="View Objective Section History" aria-expanded="false">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                                    stroke-width="2" width="14" height="14">
+                                                    stroke-width="2" width="14" height="14" aria-hidden="true">
                                                     <circle cx="12" cy="12" r="10" />
                                                     <polyline points="12 6 12 12 16 14" />
                                                 </svg>
@@ -703,7 +717,8 @@
                                     </div>
 
                                     <!-- Assessment -->
-                                    <div class="soap-section-card" data-section="assessment">
+                                    <div class="soap-section-card" data-section="assessment" role="region"
+                                        aria-label="Assessment Section">
                                         <div class="soap-card-header">
                                             <span class="soap-label soap-label-a">A</span>
                                             <h5>Assessment</h5>
@@ -713,9 +728,9 @@
                                         <div class="soap-card-body" id="soapA" contenteditable="false"></div>
                                         <div class="soap-card-actions">
                                             <button class="soap-edit-btn" data-section="assessment"
-                                                title="Edit this section">
+                                                aria-label="Edit Assessment Section">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                                    stroke-width="2" width="14" height="14">
+                                                    stroke-width="2" width="14" height="14" aria-hidden="true">
                                                     <path
                                                         d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                                                     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
@@ -723,26 +738,26 @@
                                                 <span>Edit</span>
                                             </button>
                                             <button class="soap-reject-btn" data-section="assessment"
-                                                title="Reject this section">
+                                                aria-label="Reject Assessment Section">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                                    stroke-width="2" width="14" height="14">
+                                                    stroke-width="2" width="14" height="14" aria-hidden="true">
                                                     <line x1="18" y1="6" x2="6" y2="18" />
                                                     <line x1="6" y1="6" x2="18" y2="18" />
                                                 </svg>
                                                 <span>Reject</span>
                                             </button>
                                             <button class="soap-approve-btn" data-section="assessment"
-                                                title="Approve this section">
+                                                aria-label="Approve Assessment Section">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                                    stroke-width="2" width="14" height="14">
+                                                    stroke-width="2" width="14" height="14" aria-hidden="true">
                                                     <polyline points="20 6 9 17 4 12" />
                                                 </svg>
                                                 <span>Approve</span>
                                             </button>
                                             <button class="soap-history-toggle" data-section="assessment"
-                                                title="View edit history">
+                                                aria-label="View Assessment Section History" aria-expanded="false">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                                    stroke-width="2" width="14" height="14">
+                                                    stroke-width="2" width="14" height="14" aria-hidden="true">
                                                     <circle cx="12" cy="12" r="10" />
                                                     <polyline points="12 6 12 12 16 14" />
                                                 </svg>
@@ -753,7 +768,8 @@
                                     </div>
 
                                     <!-- Plan -->
-                                    <div class="soap-section-card" data-section="plan">
+                                    <div class="soap-section-card" data-section="plan" role="region"
+                                        aria-label="Plan Section">
                                         <div class="soap-card-header">
                                             <span class="soap-label soap-label-p">P</span>
                                             <h5>Plan</h5>
@@ -762,9 +778,10 @@
                                         </div>
                                         <div class="soap-card-body" id="soapP" contenteditable="false"></div>
                                         <div class="soap-card-actions">
-                                            <button class="soap-edit-btn" data-section="plan" title="Edit this section">
+                                            <button class="soap-edit-btn" data-section="plan"
+                                                aria-label="Edit Plan Section">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                                    stroke-width="2" width="14" height="14">
+                                                    stroke-width="2" width="14" height="14" aria-hidden="true">
                                                     <path
                                                         d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                                                     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
@@ -772,26 +789,26 @@
                                                 <span>Edit</span>
                                             </button>
                                             <button class="soap-reject-btn" data-section="plan"
-                                                title="Reject this section">
+                                                aria-label="Reject Plan Section">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                                    stroke-width="2" width="14" height="14">
+                                                    stroke-width="2" width="14" height="14" aria-hidden="true">
                                                     <line x1="18" y1="6" x2="6" y2="18" />
                                                     <line x1="6" y1="6" x2="18" y2="18" />
                                                 </svg>
                                                 <span>Reject</span>
                                             </button>
                                             <button class="soap-approve-btn" data-section="plan"
-                                                title="Approve this section">
+                                                aria-label="Approve Plan Section">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                                    stroke-width="2" width="14" height="14">
+                                                    stroke-width="2" width="14" height="14" aria-hidden="true">
                                                     <polyline points="20 6 9 17 4 12" />
                                                 </svg>
                                                 <span>Approve</span>
                                             </button>
                                             <button class="soap-history-toggle" data-section="plan"
-                                                title="View edit history">
+                                                aria-label="View Plan Section History" aria-expanded="false">
                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                                    stroke-width="2" width="14" height="14">
+                                                    stroke-width="2" width="14" height="14" aria-hidden="true">
                                                     <circle cx="12" cy="12" r="10" />
                                                     <polyline points="12 6 12 12 16 14" />
                                                 </svg>
@@ -825,7 +842,7 @@
                 </div>
             </div>
             <!-- Settings View (Hidden by default) -->
-            <div id="settingsView" class="settings-view hidden">
+            <div id="settingsView" class="settings-view hidden" role="region" aria-label="Settings Configuration">
                 <div class="settings-header">
                     <h2>Neural Config</h2>
                     <div class="neural-badge">
@@ -839,25 +856,35 @@
                     <div class="settings-card full-width">
                         <h3>Holo-Theme Matrix</h3>
                         <div class="theme-options">
-                            <div class="theme-card active" data-theme="glass">
+                            <div class="theme-card active" data-theme="glass" role="button" tabindex="0"
+                                aria-label="Select Clinical Glass Theme">
                                 <div class="theme-preview glass"></div>
                                 <span>Clinical Glass</span>
                             </div>
-                            <div class="theme-card" data-theme="neon">
+                            <div class="theme-card" data-theme="neon" role="button" tabindex="0"
+                                aria-label="Select Neon Cyber Theme">
                                 <div class="theme-preview neon"></div>
                                 <span>Neon Cyber</span>
                             </div>
-                            <div class="theme-card" data-theme="midnight">
+                            <div class="theme-card" data-theme="midnight" role="button" tabindex="0"
+                                aria-label="Select Midnight Void Theme">
                                 <div class="theme-preview midnight"></div>
                                 <span>Midnight Void</span>
                             </div>
-                            <div class="theme-card" data-theme="light">
+                            <div class="theme-card" data-theme="light" role="button" tabindex="0"
+                                aria-label="Select Clinical Light Theme">
                                 <div class="theme-preview light"></div>
                                 <span>Clinical Light</span>
                             </div>
-                            <div class="theme-card" data-theme="aurora">
+                            <div class="theme-card" data-theme="aurora" role="button" tabindex="0"
+                                aria-label="Select Aurora Dusk Theme">
                                 <div class="theme-preview aurora"></div>
                                 <span>Aurora Dusk</span>
+                            </div>
+                            <div class="theme-card" data-theme="high-contrast" role="button" tabindex="0"
+                                aria-label="Select High Contrast Theme">
+                                <div class="theme-preview" style="background: #000; border: 2px solid #ff0;"></div>
+                                <span>High Contrast</span>
                             </div>
                         </div>
                     </div>
@@ -866,18 +893,20 @@
                     <div class="settings-card">
                         <h3>AI Temperament</h3>
                         <div class="slider-group">
-                            <label>
+                            <label for="depthSlider">
                                 <span>Analysis Depth</span>
-                                <span id="depthValue" class="value-display">85%</span>
+                                <span id="depthValue" class="value-display" aria-live="polite">85%</span>
                             </label>
-                            <input type="range" id="depthSlider" min="1" max="100" value="85" class="neural-slider">
+                            <input type="range" id="depthSlider" min="1" max="100" value="85" class="neural-slider"
+                                aria-label="Adjust AI analysis depth">
                         </div>
                         <div class="slider-group">
-                            <label>
+                            <label for="empathySlider">
                                 <span>Empathy Level</span>
-                                <span id="empathyValue" class="value-display">High</span>
+                                <span id="empathyValue" class="value-display" aria-live="polite">High</span>
                             </label>
-                            <input type="range" id="empathySlider" min="1" max="3" value="3" class="neural-slider">
+                            <input type="range" id="empathySlider" min="1" max="3" value="3" class="neural-slider"
+                                aria-label="Adjust AI empathy level">
                         </div>
                     </div>
 
@@ -905,19 +934,20 @@
                         <div class="toggles-row">
                             <div class="toggle-item">
                                 <div class="toggle-info">
-                                    <span class="toggle-label">Particle Intensity</span>
+                                    <label for="particleSlider" class="toggle-label">Particle Intensity</label>
                                     <span class="toggle-desc">Ambient background activity</span>
                                 </div>
                                 <input type="range" id="particleSlider" min="0" max="100" value="70"
-                                    class="neural-slider small">
+                                    class="neural-slider small" aria-label="Adjust background particle intensity">
                             </div>
                             <div class="toggle-item">
                                 <div class="toggle-info">
-                                    <span class="toggle-label">Interface Sounds</span>
+                                    <label for="soundToggle" class="toggle-label">Interface Sounds</label>
                                     <span class="toggle-desc">Haptic audio feedback</span>
                                 </div>
                                 <label class="switch">
-                                    <input type="checkbox" id="soundToggle" checked>
+                                    <input type="checkbox" id="soundToggle" checked
+                                        aria-label="Toggle interface sounds">
                                     <span class="slider round"></span>
                                 </label>
                             </div>
