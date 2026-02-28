@@ -11,9 +11,11 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-
     <!-- HTML2PDF for Print-Ready Reports -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json">
 </head>
 
 <body>
@@ -161,7 +163,6 @@
                             <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
                         </svg>
                     </button>
-                    <!-- Compliance Badge -->
                     <div class="compliance-badge">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path
@@ -171,6 +172,29 @@
                         </svg>
                         <span>Admin Use Only</span>
                     </div>
+
+                    <!-- PWA Offline Badge -->
+                    <div id="offlineBadge" class="offline-badge hidden">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M1 1l22 22"></path>
+                            <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"></path>
+                            <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"></path>
+                            <path d="M10.71 5.05A16 16 0 0 1 22.58 9"></path>
+                            <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"></path>
+                            <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+                            <line x1="12" y1="20" x2="12.01" y2="20"></line>
+                        </svg>
+                        <span>Offline</span>
+                    </div>
+
+                    <!-- Install App Button -->
+                    <button id="installAppBtn" class="install-app-btn hidden" aria-label="Install VoxDoc App">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
+                            <line x1="12" y1="18" x2="12.01" y2="18"></line>
+                        </svg>
+                        <span>Install App</span>
+                    </button>
                 </div>
             </header>
 

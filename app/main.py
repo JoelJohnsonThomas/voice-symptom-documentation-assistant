@@ -515,6 +515,27 @@ async def websocket_transcribe(websocket: WebSocket):
         )
 
 
+# PWA Endpoints
+@app.get("/service-worker.js")
+async def service_worker():
+    """Serve the Service Worker script from root scope."""
+    from fastapi.responses import FileResponse
+    sw_path = Path(__file__).parent / "static" / "service-worker.js"
+    if sw_path.exists():
+        return FileResponse(sw_path, media_type="application/javascript")
+    raise HTTPException(status_code=404, detail=f"Service worker not found at {sw_path}")
+
+
+@app.get("/manifest.json")
+async def manifest():
+    """Serve the Web App Manifest."""
+    from fastapi.responses import FileResponse
+    manifest_path = Path(__file__).parent / "static" / "manifest.json"
+    if manifest_path.exists():
+        return FileResponse(manifest_path, media_type="application/manifest+json")
+    raise HTTPException(status_code=404, detail=f"Manifest not found at {manifest_path}")
+
+
 # Root endpoint - serve index.html
 @app.get("/")
 async def root():

@@ -3166,3 +3166,67 @@ body.theme-light .theme-toggle-btn .theme-icon-moon {
 .html2pdf__page-break {
     page-break-before: always;
 }
+/* =====================================================
+   PWA & OFFLINE STYLES
+   ===================================================== */
+.offline-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: var(--radius-full);
+    color: var(--rose-500);
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+[data-theme=""high-contrast""] .offline-badge {
+    background: #000;
+    border: 1px solid #ff00ff;
+    color: #ff00ff;
+}
+
+.offline-badge svg {
+    width: 16px;
+    height: 16px;
+}
+
+.install-app-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: linear-gradient(135deg, var(--violet-600), var(--indigo-600));
+    color: white;
+    border: none;
+    border-radius: var(--radius-full);
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+    box-shadow: 0 4px 12px var(--violet-glow);
+}
+
+.install-app-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px var(--violet-glow);
+}
+
+[data-theme=""high-contrast""] .install-app-btn {
+    background: #ffff00;
+    color: #000;
+    border: 2px solid #ffff00;
+    box-shadow: none;
+}
+
+[data-theme=""high-contrast""] .install-app-btn:hover {
+    background: #000;
+    color: #ffff00;
+}
+
+.install-app-btn svg {
+    width: 16px;
+    height: 16px;
+}

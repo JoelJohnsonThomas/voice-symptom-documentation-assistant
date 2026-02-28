@@ -86,7 +86,11 @@ const elements = {
     copyBtn: document.getElementById('copyBtn'),
     exportBtn: document.getElementById('exportBtn'),
     exportPdfBtn: document.getElementById('exportPdfBtn'),
-    batchExportBtn: document.getElementById('batchExportBtn')
+    batchExportBtn: document.getElementById('batchExportBtn'),
+
+    // PWA
+    offlineBadge: document.getElementById('offlineBadge'),
+    installAppBtn: document.getElementById('installAppBtn')
 };
 
 // =====================================================
@@ -124,7 +128,11 @@ const state = {
     imageAnalysis: null,
 
     // Session History
-    sessionHistory: []
+    sessionHistory: [],
+
+    // PWA State
+    deferredInstallPrompt: null,
+    isOffline: !navigator.onLine
 };
 
 // =====================================================
@@ -519,7 +527,163 @@ function init() {
     setupSettings();
     loadSessionHistory();
     setupPDFExport();
+    setupPWA();
 }
+
+// =====================================================
+// PWA & OFFLINE SETUP
+// =====================================================
+
+function setupPWA() {
+    // 1. Register Service Worker
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/service-worker.js')
+                .then(reg => console.log('SW registered!', reg))
+                .catch(err => console.error('SW registration failed', err));
+        });
+    }
+
+    // 2. Handle Network Status
+    const updateOnlineStatus = () => {
+        state.isOffline = !navigator.onLine;
+        if (state.isOffline) {
+            elements.offlineBadge?.classList.remove('hidden');
+            console.warn("App is offline. API calls may fail.");
+        } else {
+            elements.offlineBadge?.classList.add('hidden');
+            console.log("App is back online. Attempting to sync...");
+            syncOfflineQueue();
+        }
+    };
+
+    window.addEventListener('online', updateOnlineStatus);
+    window.addEventListener('offline', updateOnlineStatus);
+    updateOnlineStatus(); // Set initial
+
+    // 3. Handle Install Prompt
+    window.addEventListener('beforeinstallprompt', (e) => {
+        // Prevent Chrome 67 and earlier from automatically showing the prompt
+        e.preventDefault();
+        // Stash the event so it can be triggered later.
+        state.deferredInstallPrompt = e;
+        // Update UI to notify the user they can add to home screen
+        elements.installAppBtn?.classList.remove('hidden');
+    });
+
+    elements.installAppBtn?.addEventListener('click', async () => {
+        if (!state.deferredInstallPrompt) return;
+
+        // Show the prompt
+        state.deferredInstallPrompt.prompt();
+        // Wait for the user to respond to the prompt
+        const { outcome } = await state.deferredInstallPrompt.userChoice;
+        console.log(`User response to the install prompt: ${outcome}`);
+
+        // We've used the prompt, and can't use it again, throw it away
+        state.deferredInstallPrompt = null;
+        elements.installAppBtn.classList.add('hidden');
+    });
+
+    window.addEventListener('appinstalled', () => {
+        // Hide the app-provided install promotion
+        elements.installAppBtn?.classList.add('hidden');
+        // Clear the deferredPrompt so it can be garbage collected
+        state.deferredInstallPrompt = null;
+        console.log('PWA was installed');
+    });
+}
+
+// Simple IndexedDB wrapper for Offline Queue
+const dbPromise = (() => {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open('VoxDocDB', 1);
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains('offlineQueue')) {
+                db.createObjectStore('offlineQueue', { keyPath: 'id' });
+            }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+})();
+
+async function saveToOfflineQueue(type, data) {
+    try {
+        const db = await dbPromise;
+        const tx = db.transaction('offlineQueue', 'readwrite');
+        const store = tx.objectStore('offlineQueue');
+        const item = {
+            id: Date.now().toString(),
+            timestamp: new Date().toISOString(),
+            type: type, // 'audio' or 'text'
+            data: data
+        };
+        await new Promise((resolve, reject) => {
+            const req = store.add(item);
+            req.onsuccess = resolve;
+            req.onerror = reject;
+        });
+        alert(`You are offline. ${type === 'audio' ? 'Recording' : 'Text'} saved locally and will sync when reconnected.`);
+    } catch (e) {
+        console.error("Failed to save to offline queue", e);
+    }
+}
+
+async function syncOfflineQueue() {
+    try {
+        const db = await dbPromise;
+        const tx = db.transaction('offlineQueue', 'readonly');
+        const store = tx.objectStore('offlineQueue');
+        const req = store.getAll();
+
+        req.onsuccess = async () => {
+            const items = req.result;
+            if (!items || items.length === 0) return;
+
+            console.log(`Syncing ${items.length} offline items...`);
+
+            for (const item of items) {
+                try {
+                    if (item.type === 'audio') {
+                        // Re-submit audio
+                        const formData = new FormData();
+                        formData.append('audio', item.data.blob, "offline_recording.webm");
+                        // Assuming a submitAudio function exists or re-implementing the logic here
+                        const response = await fetch('/api/voice-intake', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        if (!response.ok) throw new Error('Failed to re-submit audio');
+                        // Process response if needed, for now just delete from queue
+                    } else if (item.type === 'text') {
+                        // Re-submit text
+                        // Assuming a submitText function exists or re-implementing the logic here
+                        const response = await fetch('/api/document', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ transcript: item.data.text })
+                        });
+                        if (!response.ok) throw new Error('Failed to re-submit text');
+                        // Process response if needed
+                    }
+
+                    // On success, clean from queue
+                    const delTx = db.transaction('offlineQueue', 'readwrite');
+                    delTx.objectStore('offlineQueue').delete(item.id);
+                } catch (e) {
+                    console.error("Sync failed for item", item.id, e);
+                    // Leave in queue
+                }
+            }
+            console.log("Offline sync complete");
+        };
+    } catch (e) {
+        console.error("Failed to access offline queue for sync", e);
+    }
+}
+
 
 // =====================================================
 // NAVIGATION & SIDEBAR
@@ -860,12 +1024,12 @@ function formatBytes(bytes, decimals = 1) {
 
 function updateSubmitButton() {
     const hasAudio = state.audioBlob !== null;
-    const hasText = elements.textInput?.value.trim().length > 0;
+    const textContent = elements.textInput?.value.trim();
     const hasLiveTranscript = state.liveTranscript && state.liveTranscript.trim().length > 0;
     const hasImage = state.uploadedImageFile !== null;
 
     if (elements.submitBtn) {
-        elements.submitBtn.disabled = !(hasAudio || hasText || hasLiveTranscript || hasImage);
+        elements.submitBtn.disabled = !(hasAudio || textContent || hasLiveTranscript || hasImage);
     }
 }
 
@@ -933,29 +1097,40 @@ async function processInput() {
             const formData = new FormData();
             formData.append('audio', state.audioBlob, 'recording.webm');
 
-            response = await fetch('/api/voice-intake', {
-                method: 'POST',
-                body: formData
-            });
+            try {
+                response = await fetch('/api/voice-intake', {
+                    method: 'POST',
+                    body: formData
+                });
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || 'Processing failed');
-            }
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || 'Processing failed');
+                }
 
-            const data = await response.json();
+                const data = await response.json();
 
-            // If we also had image findings, we need to run another generation pass
-            // since /api/voice-intake doesn't accept image_findings directly yet
-            if (imageFindingsData) {
-                documentPayload = {
-                    transcript: data.transcript,
-                    image_findings: imageFindingsData.visual_findings_text
-                };
-            } else {
-                state.currentDocumentation = data;
-                displayResults(data);
-                return;
+                // If we also had image findings, we need to run another generation pass
+                // since /api/voice-intake doesn't accept image_findings directly yet
+                if (imageFindingsData) {
+                    documentPayload = {
+                        transcript: data.transcript,
+                        image_findings: imageFindingsData.visual_findings_text
+                    };
+                } else {
+                    state.currentDocumentation = data;
+                    displayResults(data);
+                    return;
+                }
+            } catch (error) {
+                console.error('Audio processing error:', error);
+                if (state.isOffline || error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+                    await saveToOfflineQueue('audio', { blob: state.audioBlob });
+                    showError('You are offline. Audio saved locally and will sync when reconnected.');
+                    return;
+                } else {
+                    throw error; // Re-throw if not an offline error
+                }
             }
         } else if (textContent) {
             documentPayload = { transcript: textContent };
@@ -971,29 +1146,51 @@ async function processInput() {
 
         // 3. Generate documentation
         if (Object.keys(documentPayload).length > 0) {
-            response = await fetch('/api/document', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(documentPayload)
-            });
+            try {
+                response = await fetch('/api/document', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(documentPayload)
+                });
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(`Documentation generation failed: ${errorData.detail || 'Unknown error'}`);
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`Documentation generation failed: ${errorData.detail || 'Unknown error'}`);
+                }
+
+                let data = await response.json();
+
+                // Normalize response format depending on input source
+                data.transcript = documentPayload.transcript;
+                data.duration_seconds = state.recordingStartTime && hasAudio
+                    ? (Date.now() - state.recordingStartTime) / 1000
+                    : 0;
+
+                state.currentDocumentation = data;
+                displayResults(data);
+            } catch (error) {
+                console.error('Documentation generation error:', error);
+                if (state.isOffline || error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+                    // If textContent was the primary input, save it
+                    if (textContent && !hasAudio && !hasLiveTranscript) {
+                        await saveToOfflineQueue('text', { text: textContent });
+                        showError('You are offline. Text input saved locally and will sync when reconnected.');
+                        return;
+                    } else if (hasLiveTranscript && !hasAudio && !textContent) {
+                        await saveToOfflineQueue('text', { text: state.liveTranscript });
+                        showError('You are offline. Live transcript saved locally and will sync when reconnected.');
+                        return;
+                    }
+                    // If audio was processed successfully but doc generation failed, it's more complex.
+                    // For now, just show error.
+                    showError('You are offline. Could not generate documentation. Please try again when online.');
+                    return;
+                } else {
+                    throw error; // Re-throw if not an offline error
+                }
             }
-
-            let data = await response.json();
-
-            // Normalize response format depending on input source
-            data.transcript = documentPayload.transcript;
-            data.duration_seconds = state.recordingStartTime && hasAudio
-                ? (Date.now() - state.recordingStartTime) / 1000
-                : 0;
-
-            state.currentDocumentation = data;
-            displayResults(data);
         }
 
     } catch (error) {

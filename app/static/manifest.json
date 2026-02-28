@@ -1,0 +1,27 @@
+{
+    "name": "VoxDoc - Voice Symptom Triage",
+    "short_name": "VoxDoc",
+    "description": "AI-Powered Voice Symptom Intake & Documentation Assistant",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "background_color": "#0f111a",
+    "theme_color": "#0f111a",
+    "icons": [
+        {
+            "src": "/static/icon.svg",
+            "type": "image/svg+xml",
+            "sizes": "any"
+        },
+        {
+            "src": "/static/icon-192x192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "/static/icon-512x512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        }
+    ]
+}
