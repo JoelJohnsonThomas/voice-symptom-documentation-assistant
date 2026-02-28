@@ -90,7 +90,13 @@ const elements = {
 
     // PWA
     offlineBadge: document.getElementById('offlineBadge'),
-    installAppBtn: document.getElementById('installAppBtn')
+    installAppBtn: document.getElementById('installAppBtn'),
+
+    // NER Entities
+    nerEntitiesCard: document.getElementById('nerEntitiesCard'),
+    nerEntityCount: document.getElementById('nerEntityCount'),
+    nerConditionBadges: document.getElementById('nerConditionBadges'),
+    nerMedicationBadges: document.getElementById('nerMedicationBadges')
 };
 
 // =====================================================
@@ -1356,6 +1362,58 @@ function displayResults(data) {
     }
 
     resetSOAPCardStates();
+
+    // Display NER Extracted Entities
+    displayNEREntities(data.extracted_entities);
+}
+
+/**
+ * Render extracted NER entities as styled badges.
+ * @param {Object} entities - { conditions: [...], medications: [...] }
+ */
+function displayNEREntities(entities) {
+    if (!entities || (!entities.conditions?.length && !entities.medications?.length)) {
+        // Hide the card if no entities
+        elements.nerEntitiesCard?.classList.add('hidden');
+        return;
+    }
+
+    elements.nerEntitiesCard?.classList.remove('hidden');
+
+    const totalCount = (entities.conditions?.length || 0) + (entities.medications?.length || 0);
+    if (elements.nerEntityCount) {
+        elements.nerEntityCount.textContent = `${totalCount} ${totalCount === 1 ? 'entity' : 'entities'}`;
+    }
+
+    // Render Conditions
+    if (elements.nerConditionBadges) {
+        if (entities.conditions && entities.conditions.length > 0) {
+            elements.nerConditionBadges.innerHTML = entities.conditions.map(ent =>
+                `<span class="entity-badge entity-condition" title="${ent.system}: ${ent.code}">
+                    <span class="entity-name">${escapeHTML(ent.text)}</span>
+                    <span class="entity-code">${ent.system}: ${ent.code}</span>
+                </span>`
+            ).join('');
+            document.getElementById('nerConditions')?.classList.remove('hidden');
+        } else {
+            elements.nerConditionBadges.innerHTML = '<span class="ner-empty-state">None detected</span>';
+        }
+    }
+
+    // Render Medications
+    if (elements.nerMedicationBadges) {
+        if (entities.medications && entities.medications.length > 0) {
+            elements.nerMedicationBadges.innerHTML = entities.medications.map(ent =>
+                `<span class="entity-badge entity-medication" title="${ent.system}: ${ent.code}">
+                    <span class="entity-name">${escapeHTML(ent.text)}</span>
+                    <span class="entity-code">${ent.system}: ${ent.code}</span>
+                </span>`
+            ).join('');
+            document.getElementById('nerMedications')?.classList.remove('hidden');
+        } else {
+            elements.nerMedicationBadges.innerHTML = '<span class="ner-empty-state">None detected</span>';
+        }
+    }
 }
 
 // =====================================================

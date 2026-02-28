@@ -3230,3 +3230,95 @@ body.theme-light .theme-toggle-btn .theme-icon-moon {
     width: 16px;
     height: 16px;
 }
+
+/* =====================================================
+   MEDICAL NER ENTITY STYLES
+   ===================================================== */
+.soap-label-ner {
+    background: linear-gradient(135deg, #06b6d4, #8b5cf6) !important;
+}
+
+.ner-entities-body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 16px 0;
+}
+
+.ner-category-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
+.ner-category-label svg {
+    color: var(--violet-500);
+}
+
+.ner-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.entity-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: var(--radius-full);
+    font-size: 0.78rem;
+    font-weight: 500;
+    transition: var(--transition);
+    cursor: default;
+}
+
+.entity-badge:hover {
+    transform: translateY(-1px);
+}
+
+.entity-badge .entity-name {
+    font-weight: 600;
+}
+
+.entity-badge .entity-code {
+    font-size: 0.7rem;
+    opacity: 0.7;
+    font-family: monospace;
+}
+
+/* Condition badges (warm red/orange tones) */
+.entity-condition {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--rose-500);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+[data-theme=""high-contrast""] .entity-condition {
+    background: #000;
+    color: #ff00ff;
+    border: 1px solid #ff00ff;
+}
+
+/* Medication badges (cool blue/purple tones) */
+.entity-medication {
+    background: rgba(124, 58, 237, 0.1);
+    color: var(--violet-500);
+    border: 1px solid rgba(124, 58, 237, 0.2);
+}
+
+[data-theme=""high-contrast""] .entity-medication {
+    background: #000;
+    color: #00ffff;
+    border: 1px solid #00ffff;
+}
+
+.ner-empty-state {
+    color: var(--text-muted);
+    font-style: italic;
+    font-size: 0.8rem;
+}

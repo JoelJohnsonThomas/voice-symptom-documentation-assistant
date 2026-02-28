@@ -530,6 +530,45 @@
                                     <div class="soap-history-panel hidden" id="soapHistoryCC"></div>
                                 </div>
 
+                                <!-- Extracted Medical Entities (NER) -->
+                                <div class="soap-section-card hidden" id="nerEntitiesCard" role="region"
+                                    aria-label="Extracted Medical Entities">
+                                    <div class="soap-card-header">
+                                        <span class="soap-label soap-label-ner">NER</span>
+                                        <h5>Extracted Entities</h5>
+                                        <span class="badge info" id="nerEntityCount">0 entities</span>
+                                    </div>
+                                    <div class="soap-card-body ner-entities-body">
+                                        <div class="ner-category" id="nerConditions">
+                                            <div class="ner-category-label">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" width="14" height="14" aria-hidden="true">
+                                                    <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                                                </svg>
+                                                <span>Conditions</span>
+                                            </div>
+                                            <div class="ner-badges" id="nerConditionBadges">
+                                                <!-- Dynamically populated -->
+                                            </div>
+                                        </div>
+                                        <div class="ner-category" id="nerMedications">
+                                            <div class="ner-category-label">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                    stroke-width="2" width="14" height="14" aria-hidden="true">
+                                                    <path
+                                                        d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                                                    <line x1="12" y1="9" x2="12" y2="13" />
+                                                    <line x1="12" y1="17" x2="12.01" y2="17" />
+                                                </svg>
+                                                <span>Medications</span>
+                                            </div>
+                                            <div class="ner-badges" id="nerMedicationBadges">
+                                                <!-- Dynamically populated -->
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <!-- Clinical Details -->
                                 <div class="soap-section-card" data-section="clinical_details" role="region"
                                     aria-label="Clinical Details Section">

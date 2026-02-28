@@ -24,3 +24,7 @@ noisereduce==3.0.0
 pydantic==2.6.4
 pydantic-settings==2.2.1
 python-dotenv==1.0.1
+
+# Named Entity Recognition (NER)
+spacy>=3.7.0
+scispacy>=0.5.3

@@ -26,6 +26,7 @@ from pathlib import Path
 from app.config import settings
 from app.models.medasr_service import get_medasr_service
 from app.models.medgemma_service import get_medgemma_service
+from app.models.ner_service import get_ner_service
 from app.models.streaming_asr import StreamingASRSession
 from app.utils.audio_handler import AudioHandler
 
@@ -75,6 +76,7 @@ class DocumentationRequest(BaseModel):
 
 class DocumentationResponse(BaseModel):
     documentation: dict
+    extracted_entities: dict
     requires_clinician_review: bool
     compliance_notice: str
 
@@ -82,6 +84,7 @@ class DocumentationResponse(BaseModel):
 class VoiceIntakeResponse(BaseModel):
     transcript: str
     documentation: dict
+    extracted_entities: dict
     duration_seconds: float
     requires_clinician_review: bool
     compliance_notice: str
@@ -101,6 +104,10 @@ async def startup_event():
         medgemma = get_medgemma_service()
         logger.info(f"✅ MedGemma ready: {medgemma.is_ready()}")
         
+        logger.info("Loading Medical NER model...")
+        ner = get_ner_service()
+        logger.info(f"✅ Medical NER ready: {ner.is_ready}")
+        
         logger.info("🎉 All models loaded successfully!")
     except Exception as e:
         logger.error(f"❌ Model preload failed: {e}")
@@ -119,6 +126,7 @@ async def health_check():
             "status": "healthy",
             "medasr_ready": medasr.is_ready(),
             "medgemma_ready": medgemma.is_ready(),
+            "ner_ready": get_ner_service().is_ready,
             "vision_ready": medgemma.is_vision_ready(),
             "device": settings.device,
             "gpu_enabled": settings.enable_gpu
@@ -209,10 +217,15 @@ async def generate_documentation(request: DocumentationRequest):
             image_findings=request.image_findings
         )
         
+        # Extract Medical Entities
+        ner_service = get_ner_service()
+        extracted_entities = ner_service.extract_entities(request.transcript)
+        
         logger.info("Documentation generated successfully")
         
         return DocumentationResponse(
             documentation=documentation,
+            extracted_entities=extracted_entities,
             requires_clinician_review=True,
             compliance_notice=(
                 "This is administrative documentation only. "
@@ -327,11 +340,17 @@ async def voice_intake(audio: UploadFile = File(...)):
         # Step 3: Generate documentation
         medgemma = get_medgemma_service()
         documentation = medgemma.generate_documentation(transcript)
+        
+        # Step 4: Extract Medical Entities
+        ner_service = get_ner_service()
+        extracted_entities = ner_service.extract_entities(transcript)
+        
         logger.info("Documentation generated")
         
         return VoiceIntakeResponse(
             transcript=transcript,
             documentation=documentation,
+            extracted_entities=extracted_entities,
             duration_seconds=duration,
             requires_clinician_review=True,
             compliance_notice=(
