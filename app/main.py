@@ -27,6 +27,7 @@ from app.config import settings
 from app.models.medasr_service import get_medasr_service
 from app.models.medgemma_service import get_medgemma_service
 from app.models.ner_service import get_ner_service
+from app.models.fhir_service import get_fhir_service
 from app.models.streaming_asr import StreamingASRSession
 from app.utils.audio_handler import AudioHandler
 
@@ -88,6 +89,20 @@ class VoiceIntakeResponse(BaseModel):
     duration_seconds: float
     requires_clinician_review: bool
     compliance_notice: str
+
+
+class FHIRExportRequest(BaseModel):
+    documentation: dict
+    extracted_entities: Optional[dict] = None
+    patient_info: Optional[dict] = None
+
+
+class FHIRPushRequest(BaseModel):
+    documentation: dict
+    extracted_entities: Optional[dict] = None
+    patient_info: Optional[dict] = None
+    ehr_url: str
+    auth_token: Optional[str] = None
 
 
 # Startup event to preload models
@@ -553,6 +568,43 @@ async def manifest():
     if manifest_path.exists():
         return FileResponse(manifest_path, media_type="application/manifest+json")
     raise HTTPException(status_code=404, detail=f"Manifest not found at {manifest_path}")
+
+
+# =====================================================
+# FHIR EXPORT ENDPOINTS
+# =====================================================
+
+@app.post("/api/fhir/export")
+async def fhir_export(request: FHIRExportRequest):
+    """Generate and return a FHIR R4 Bundle from documentation data."""
+    try:
+        fhir = get_fhir_service()
+        bundle = fhir.build_bundle(
+            documentation=request.documentation,
+            entities=request.extracted_entities,
+            patient_info=request.patient_info
+        )
+        return bundle
+    except Exception as e:
+        logger.error(f"FHIR export failed: {e}")
+        raise HTTPException(status_code=500, detail=f"FHIR export failed: {str(e)}")
+
+
+@app.post("/api/fhir/push")
+async def fhir_push(request: FHIRPushRequest):
+    """Build a FHIR Bundle and push it to an external EHR/FHIR server."""
+    try:
+        fhir = get_fhir_service()
+        bundle = fhir.build_bundle(
+            documentation=request.documentation,
+            entities=request.extracted_entities,
+            patient_info=request.patient_info
+        )
+        result = await fhir.push_to_ehr(bundle, request.ehr_url, request.auth_token)
+        return result
+    except Exception as e:
+        logger.error(f"FHIR push failed: {e}")
+        raise HTTPException(status_code=500, detail=f"FHIR push failed: {str(e)}")
 
 
 # Root endpoint - serve index.html

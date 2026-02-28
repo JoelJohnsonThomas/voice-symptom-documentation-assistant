@@ -96,7 +96,17 @@ const elements = {
     nerEntitiesCard: document.getElementById('nerEntitiesCard'),
     nerEntityCount: document.getElementById('nerEntityCount'),
     nerConditionBadges: document.getElementById('nerConditionBadges'),
-    nerMedicationBadges: document.getElementById('nerMedicationBadges')
+    nerMedicationBadges: document.getElementById('nerMedicationBadges'),
+
+    // FHIR / EHR
+    fhirExportBtn: document.getElementById('fhirExportBtn'),
+    ehrPushBtn: document.getElementById('ehrPushBtn'),
+    ehrModal: document.getElementById('ehrModal'),
+    ehrModalClose: document.getElementById('ehrModalClose'),
+    ehrModalCancel: document.getElementById('ehrModalCancel'),
+    ehrModalSubmit: document.getElementById('ehrModalSubmit'),
+    ehrServerUrl: document.getElementById('ehrServerUrl'),
+    ehrAuthToken: document.getElementById('ehrAuthToken')
 };
 
 // =====================================================
@@ -1422,6 +1432,29 @@ function displayNEREntities(entities) {
 function setupActions() {
     elements.copyBtn?.addEventListener('click', copyToClipboard);
     elements.exportBtn?.addEventListener('click', exportJSON);
+    elements.fhirExportBtn?.addEventListener('click', downloadFHIRBundle);
+    elements.ehrPushBtn?.addEventListener('click', () => {
+        elements.ehrModal?.classList.remove('hidden');
+    });
+    elements.ehrModalClose?.addEventListener('click', () => {
+        elements.ehrModal?.classList.add('hidden');
+    });
+    elements.ehrModalCancel?.addEventListener('click', () => {
+        elements.ehrModal?.classList.add('hidden');
+    });
+    elements.ehrModal?.querySelector('.ehr-modal-backdrop')?.addEventListener('click', () => {
+        elements.ehrModal?.classList.add('hidden');
+    });
+    elements.ehrModalSubmit?.addEventListener('click', pushToEHR);
+
+    // EHR preset buttons
+    document.querySelectorAll('.ehr-preset-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (elements.ehrServerUrl) {
+                elements.ehrServerUrl.value = btn.dataset.url;
+            }
+        });
+    });
 }
 
 async function copyToClipboard() {
@@ -1516,6 +1549,91 @@ function exportJSON() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+}
+
+async function downloadFHIRBundle() {
+    if (!state.currentDocumentation) return;
+
+    try {
+        elements.fhirExportBtn.classList.add('loading');
+
+        const response = await fetch('/api/fhir/export', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                documentation: state.currentDocumentation.documentation,
+                extracted_entities: state.currentDocumentation.extracted_entities
+            })
+        });
+
+        if (!response.ok) throw new Error('FHIR export failed');
+
+        const bundle = await response.json();
+        const dataStr = JSON.stringify(bundle, null, 2);
+        const blob = new Blob([dataStr], { type: 'application/fhir+json' });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `fhir_bundle_${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (error) {
+        console.error('FHIR Download error:', error);
+        alert('Failed to generate FHIR Bundle. Please check the console.');
+    } finally {
+        elements.fhirExportBtn.classList.remove('loading');
+    }
+}
+
+async function pushToEHR() {
+    if (!state.currentDocumentation) return;
+
+    const ehrUrl = elements.ehrServerUrl?.value;
+    if (!ehrUrl) {
+        alert("Please enter a valid FHIR Server URL.");
+        return;
+    }
+
+    try {
+        elements.ehrModalSubmit.disabled = true;
+        elements.ehrModalSubmit.innerHTML = '<div class="spinner"></div> Pushing...';
+
+        const response = await fetch('/api/fhir/push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                documentation: state.currentDocumentation.documentation,
+                extracted_entities: state.currentDocumentation.extracted_entities,
+                ehr_url: ehrUrl,
+                auth_token: elements.ehrAuthToken?.value || null
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert(`Success! Bundle pushed to EHR (Status: ${result.status_code})`);
+            elements.ehrModal?.classList.add('hidden');
+        } else {
+            console.error(result.error);
+            alert(`Failed to push to EHR: ${result.error}`);
+        }
+    } catch (error) {
+        console.error("EHR Push error:", error);
+        alert("Network error occurred while pushing to EHR.");
+    } finally {
+        elements.ehrModalSubmit.disabled = false;
+        elements.ehrModalSubmit.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" aria-hidden="true">
+                <polyline points="16 6 12 2 8 6" />
+                <line x1="12" y1="2" x2="12" y2="15" />
+            </svg>
+            Push Bundle
+        `;
+    }
 }
 
 // =====================================================

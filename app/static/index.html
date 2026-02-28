@@ -400,6 +400,68 @@
                                     </svg>
                                     <span>Copy Note</span>
                                 </button>
+                                <button class="action-btn" id="fhirExportBtn" aria-label="Download FHIR R4 Bundle">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                        aria-hidden="true">
+                                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                                        <polyline points="22 4 12 14.01 9 11.01" />
+                                    </svg>
+                                    <span>FHIR</span>
+                                </button>
+                                <button class="action-btn" id="ehrPushBtn" aria-label="Push to EHR System">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                        aria-hidden="true">
+                                        <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+                                        <polyline points="16 6 12 2 8 6" />
+                                        <line x1="12" y1="2" x2="12" y2="15" />
+                                    </svg>
+                                    <span>Push EHR</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- EHR Push Modal -->
+                        <div id="ehrModal" class="ehr-modal hidden" role="dialog" aria-label="Push to EHR System"
+                            aria-modal="true">
+                            <div class="ehr-modal-backdrop"></div>
+                            <div class="ehr-modal-content">
+                                <div class="ehr-modal-header">
+                                    <h4>Push to EHR System</h4>
+                                    <button class="ehr-modal-close" id="ehrModalClose"
+                                        aria-label="Close modal">&times;</button>
+                                </div>
+                                <div class="ehr-modal-body">
+                                    <div class="ehr-field">
+                                        <label for="ehrServerUrl">FHIR Server URL</label>
+                                        <input type="url" id="ehrServerUrl"
+                                            placeholder="https://hapi.fhir.org/baseR4" />
+                                    </div>
+                                    <div class="ehr-field">
+                                        <label for="ehrAuthToken">Authorization Token (optional)</label>
+                                        <input type="password" id="ehrAuthToken"
+                                            placeholder="Bearer token for Epic/Cerner" />
+                                    </div>
+                                    <div class="ehr-presets">
+                                        <span class="ehr-presets-label">Quick Presets:</span>
+                                        <button class="ehr-preset-btn" data-url="https://hapi.fhir.org/baseR4">HAPI
+                                            (Test)</button>
+                                        <button class="ehr-preset-btn"
+                                            data-url="https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4">Epic</button>
+                                        <button class="ehr-preset-btn"
+                                            data-url="https://fhir.cerner.com/r4">Cerner</button>
+                                    </div>
+                                </div>
+                                <div class="ehr-modal-footer">
+                                    <button class="action-btn" id="ehrModalCancel">Cancel</button>
+                                    <button class="action-btn primary" id="ehrModalSubmit">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                            width="14" height="14" aria-hidden="true">
+                                            <polyline points="16 6 12 2 8 6" />
+                                            <line x1="12" y1="2" x2="12" y2="15" />
+                                        </svg>
+                                        Push Bundle
+                                    </button>
+                                </div>
                             </div>
                         </div>
 
