@@ -19,6 +19,7 @@ This project was built to demonstrate how **specialized medical AI models** (Med
   - Chief Complaint & Symptom Details (Onset, Duration, Severity, Location)
   - Medical Entities (Conditions, Medications)
 - **📋 Full Automated Documentation:** Generates complete and editable **SOAP Notes (Subjective, Objective, Assessment, Plan)**.
+- **💾 Patient History & Session Management:** Local SQLite database persistence for tracking and reviewing past intake sessions.
 - **✍️ Clinician Annotation:** Allows inline editing, approval, and rejection of generated sections with edit history tracking.
 - **🖼️ Multi-Modal Input:** Supports image uploads for visual findings analysis via MedGemma Vision.
 - **🏥 EHR / FHIR Integration:** Ready for seamless data export to major EHR systems (Epic, Cerner) via HL7 FHIR R4 Bundles.
@@ -32,6 +33,7 @@ This project was built to demonstrate how **specialized medical AI models** (Med
 ### Backend
 - **Python 3.10+**
 - **FastAPI** - High-performance asynchronous API framework
+- **SQLAlchemy & SQLite** - Asynchronous local session persistence
 - **PyTorch** - Deep learning inference
 - **Transformers (Hugging Face)** - Model management
 
