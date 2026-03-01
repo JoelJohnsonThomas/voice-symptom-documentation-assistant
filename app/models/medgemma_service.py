@@ -440,7 +440,7 @@ class MedGemmaService:
         
         return True, ""
     
-    def generate_documentation(self, transcript: str, image_findings: Optional[str] = None) -> Dict[str, Any]:
+    def generate_documentation(self, transcript: str, image_findings: Optional[str] = None, detected_language: str = "en") -> Dict[str, Any]:
         """
         Generate structured symptom documentation from transcript.
         
@@ -466,9 +466,9 @@ class MedGemmaService:
             # Create prompt content — use image-aware prompt if image findings available
             if image_findings:
                 logger.info("Including image findings in documentation prompt")
-                prompt_content = create_documentation_with_image_prompt(transcript, image_findings)
+                prompt_content = create_documentation_with_image_prompt(transcript, image_findings, language=detected_language)
             else:
-                prompt_content = create_documentation_prompt(transcript)
+                prompt_content = create_documentation_prompt(transcript, language=detected_language)
             
             # MedGemma 1.5 is a chat model - use chat template
             messages = [
@@ -532,7 +532,7 @@ class MedGemmaService:
             
             # Generate O, A, P sections using MedGemma
             try:
-                oap_sections = self.generate_soap_sections(transcript, documentation)
+                oap_sections = self.generate_soap_sections(transcript, documentation, detected_language=detected_language)
                 documentation.update(oap_sections)
             except Exception as oap_err:
                 logger.warning(f"O/A/P generation failed, using defaults: {oap_err}")
@@ -559,7 +559,7 @@ class MedGemmaService:
             logger.error(f"Documentation generation failed: {e}")
             raise
     
-    def generate_soap_sections(self, transcript: str, subjective_data: dict) -> dict:
+    def generate_soap_sections(self, transcript: str, subjective_data: dict, detected_language: str = "en") -> dict:
         """
         Generate Objective, Assessment, and Plan SOAP sections.
         
@@ -577,7 +577,7 @@ class MedGemmaService:
         
         from app.prompts.documentation_prompts import create_soap_oap_prompt
         
-        prompt_content = create_soap_oap_prompt(transcript, subjective_data)
+        prompt_content = create_soap_oap_prompt(transcript, subjective_data, language=detected_language)
         
         # Use chat template
         messages = [{"role": "user", "content": prompt_content}]

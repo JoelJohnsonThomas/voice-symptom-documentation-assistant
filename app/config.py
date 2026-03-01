@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     medasr_model: str = "google/medasr"
     medgemma_model: str = "google/medgemma-1.5-4b-it"
     medgemma_vision_model: str = "google/medgemma-4b-it"
+    whisper_model: str = "openai/whisper-small"
+    multilingual_asr_enabled: bool = True
     
     # Image Analysis
     enable_image_analysis: bool = True

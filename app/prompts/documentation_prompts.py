@@ -6,7 +6,7 @@ These prompts are designed to extract and structure information ONLY.
 They explicitly prohibit clinical decision-making, triage, or urgency assessment.
 """
 
-def create_documentation_prompt(transcript: str) -> str:
+def create_documentation_prompt(transcript: str, language: str = "en") -> str:
     """
     Create clean, direct prompt without chat artifacts.
     Cleans transcript before formatting to remove ASR artifacts.
@@ -44,10 +44,10 @@ Important extraction rules:
 - Include uncertainty language in SOAP note: "Patient reports possible...", "Patient uncertain between..."
 - Do not add symptoms or details not stated by patient
 - Use "not specified" for fields without explicit information
-- Use plain English, no markdown formatting."""
+- Use plain English, no markdown formatting.{chr(10) + f'- BILINGUAL OUTPUT REQUIRED: The patient spoke in {language}. All extracted symptoms and the SOAP subjective note MUST be bilingual, formatted as "[{language} text] / [English translation]".' if language != 'en' else ''}"""
 
 
-def create_soap_oap_prompt(transcript: str, subjective_data: dict) -> str:
+def create_soap_oap_prompt(transcript: str, subjective_data: dict, language: str = "en") -> str:
     """
     Create a prompt for generating Objective, Assessment, and Plan SOAP sections.
     
@@ -113,7 +113,8 @@ Do NOT prescribe specific medications or dosages.
 Format your response exactly as:
 OBJECTIVE: [your objective paragraph]
 ASSESSMENT: [your assessment paragraph]
-PLAN: [your plan paragraph]"""
+PLAN: [your plan paragraph]
+{chr(10) + f'BILINGUAL OUTPUT REQUIRED: Since the patient spoke {language}, the generated OBJECTIVE, ASSESSMENT, and PLAN sections MUST be written in both {language} and English (format: "[{language} text] / [English translation]").' if language != 'en' else ''}"""
 
 
 def create_image_analysis_prompt() -> str:
@@ -145,7 +146,7 @@ OBSERVATIONS: [detailed visual description]
 NOTABLE FEATURES: [any distinguishing characteristics]"""
 
 
-def create_documentation_with_image_prompt(transcript: str, image_description: str) -> str:
+def create_documentation_with_image_prompt(transcript: str, image_description: str, language: str = "en") -> str:
     """
     Create a documentation prompt that includes both transcript and image findings.
     
@@ -184,4 +185,4 @@ Important extraction rules:
 - Integrate image findings naturally: "Patient presents with [verbal symptoms]. Uploaded image shows [visual findings]."
 - Do not add symptoms or details not stated by patient or visible in the image
 - Use "not specified" for fields without explicit information
-- Use plain English, no markdown formatting."""
+- Use plain English, no markdown formatting.{chr(10) + f'- BILINGUAL OUTPUT REQUIRED: The patient spoke in {language}. All extracted symptoms and the SOAP subjective note MUST be bilingual, formatted as "[{language} text] / [English translation]".' if language != 'en' else ''}"""

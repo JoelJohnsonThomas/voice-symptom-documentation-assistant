@@ -1267,6 +1267,17 @@ function displayResults(data) {
         elements.transcriptionText.textContent = data.transcript;
     }
 
+    // Detected Language Badge
+    const langBadge = document.getElementById('detectedLanguageBadge');
+    if (langBadge) {
+        if (data.detected_language && data.detected_language !== 'en') {
+            langBadge.textContent = 'Detected: ' + data.detected_language.toUpperCase();
+            langBadge.classList.remove('hidden');
+        } else {
+            langBadge.classList.add('hidden');
+        }
+    }
+
     // Audio Playback (only for voice input)
     if (state.audioUrl && elements.audioPlaybackSection && elements.resultAudioPlayer) {
         elements.resultAudioPlayer.src = state.audioUrl;

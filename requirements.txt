@@ -19,6 +19,7 @@ librosa==0.10.1
 soundfile==0.12.1
 audioread==3.0.1
 noisereduce==3.0.0
+openai-whisper
 
 # Config / Validation
 pydantic==2.6.4

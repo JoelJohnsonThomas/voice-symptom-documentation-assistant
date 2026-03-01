@@ -515,7 +515,12 @@
 
                                 <!-- Transcription -->
                                 <div class="result-section">
-                                    <h4>Transcription</h4>
+                                    <div
+                                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                                        <h4 style="margin: 0;">Transcription</h4>
+                                        <span id="detectedLanguageBadge" class="badge info hidden">Detected:
+                                            English</span>
+                                    </div>
                                     <p id="transcriptionText" class="transcription-text"></p>
 
                                     <!-- Audio Playback Section -->

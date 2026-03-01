@@ -68,6 +68,7 @@ if static_path.exists():
 class TranscriptionResponse(BaseModel):
     transcript: str
     duration_seconds: float
+    detected_language: Optional[str] = "en"
 
 
 class DocumentationRequest(BaseModel):
@@ -89,6 +90,7 @@ class VoiceIntakeResponse(BaseModel):
     duration_seconds: float
     requires_clinician_review: bool
     compliance_notice: str
+    detected_language: Optional[str] = "en"
 
 
 class FHIRExportRequest(BaseModel):
@@ -183,13 +185,18 @@ async def transcribe_audio(audio: UploadFile = File(...)):
         
         # Transcribe
         medasr = get_medasr_service()
-        transcript = medasr.transcribe(audio_array=audio_array, sample_rate=sr)
+        result = medasr.transcribe(audio_array=audio_array, sample_rate=sr)
+        if isinstance(result, tuple):
+            transcript, detected_language = result
+        else:
+            transcript, detected_language = result, "en"
         
-        logger.info(f"Transcription successful: {len(transcript)} characters")
+        logger.info(f"Transcription successful: {len(transcript)} characters, Language: {detected_language}")
         
         return TranscriptionResponse(
             transcript=transcript,
-            duration_seconds=duration
+            duration_seconds=duration,
+            detected_language=detected_language
         )
         
     except Exception as e:
@@ -349,12 +356,16 @@ async def voice_intake(audio: UploadFile = File(...)):
         
         # Step 2: Transcribe
         medasr = get_medasr_service()
-        transcript = medasr.transcribe(audio_array=audio_array, sample_rate=sr)
-        logger.info(f"Transcription complete: {len(transcript)} characters")
+        result = medasr.transcribe(audio_array=audio_array, sample_rate=sr)
+        if isinstance(result, tuple):
+            transcript, detected_language = result
+        else:
+            transcript, detected_language = result, "en"
+        logger.info(f"Transcription complete: {len(transcript)} characters, Language: {detected_language}")
         
         # Step 3: Generate documentation
         medgemma = get_medgemma_service()
-        documentation = medgemma.generate_documentation(transcript)
+        documentation = medgemma.generate_documentation(transcript, detected_language=detected_language)
         
         # Step 4: Extract Medical Entities
         ner_service = get_ner_service()
@@ -371,7 +382,8 @@ async def voice_intake(audio: UploadFile = File(...)):
             compliance_notice=(
                 "This is administrative documentation only. "
                 "All clinical decisions must be made by qualified healthcare professionals."
-            )
+            ),
+            detected_language=detected_language
         )
         
     except Exception as e:

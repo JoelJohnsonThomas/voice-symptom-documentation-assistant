@@ -11,6 +11,7 @@ from transformers import AutoModelForCTC, AutoProcessor, pipeline
 from typing import Union, BinaryIO
 import numpy as np
 import logging
+import whisper
 
 from app.config import settings
 
@@ -26,6 +27,7 @@ class MedASRService:
         self.model = None
         self.processor = None
         self.pipe = None
+        self.whisper_model = None
         self._load_model()
     
     def _load_model(self):
@@ -42,6 +44,12 @@ class MedASRService:
             )
             
             logger.info("MedASR model loaded successfully")
+            
+            if getattr(settings, "multilingual_asr_enabled", False):
+                logger.info(f"Loading Whisper model: {settings.whisper_model}")
+                whisper_name = settings.whisper_model.split("/")[-1].replace("whisper-", "")
+                self.whisper_model = whisper.load_model(whisper_name, device=self.device)
+                logger.info("Whisper model loaded successfully")
             
         except Exception as e:
             logger.error(f"Failed to load MedASR model: {e}")
@@ -92,26 +100,42 @@ class MedASRService:
                     f"({settings.max_audio_duration_seconds}s)"
                 )
             
-            logger.info(f"Transcribing audio ({duration:.1f}s)...")
+            # Detect language if Whisper is available
+            detected_language = "en"
+            if self.whisper_model is not None:
+                audio_float32 = audio_array.astype(np.float32)
+                # Pad/trim to 30 seconds for language detection
+                audio_for_detect = whisper.pad_or_trim(audio_float32)
+                mel = whisper.log_mel_spectrogram(audio_for_detect, n_mels=self.whisper_model.dims.n_mels).to(self.whisper_model.device)
+                _, probs = self.whisper_model.detect_language(mel)
+                detected_language = max(probs, key=probs.get)
+                logger.info(f"Detected language: {detected_language}")
             
-            # Transcribe using pipeline with chunking for long audio
-            result = self.pipe(
-                audio_array,
-                chunk_length_s=20,  # Process in 20-second chunks
-                stride_length_s=2   # 2-second overlap between chunks
-            )
-            
-            transcript = result["text"]
-            
-            # Clean up special tokens and artifacts
-            import re
-            transcript = re.sub(r'</?s>|<unk>|<pad>', '', transcript)  # Remove special tokens
-            transcript = transcript.strip().lstrip('.,;:!? ')  # Remove leading punctuation/whitespace
-            transcript = ' '.join(transcript.split())  # Normalize whitespace
+            if detected_language != "en" and self.whisper_model is not None:
+                logger.info(f"Transcribing {detected_language} audio ({duration:.1f}s) with Whisper...")
+                result = self.whisper_model.transcribe(audio_float32, language=detected_language)
+                transcript = result["text"]
+            else:
+                logger.info(f"Transcribing English audio ({duration:.1f}s) with MedASR...")
+                
+                # Transcribe using pipeline with chunking for long audio
+                result = self.pipe(
+                    audio_array,
+                    chunk_length_s=20,  # Process in 20-second chunks
+                    stride_length_s=2   # 2-second overlap between chunks
+                )
+                
+                transcript = result["text"]
+                
+                # Clean up special tokens and artifacts
+                import re
+                transcript = re.sub(r'</?s>|<unk>|<pad>', '', transcript)  # Remove special tokens
+                transcript = transcript.strip().lstrip('.,;:!? ')  # Remove leading punctuation/whitespace
+                transcript = ' '.join(transcript.split())  # Normalize whitespace
             
             logger.info(f"Transcription complete: {len(transcript)} characters")
             
-            return transcript
+            return transcript, detected_language
             
         except Exception as e:
             logger.error(f"Transcription failed: {e}")
