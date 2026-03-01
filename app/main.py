@@ -8,12 +8,14 @@ This system provides ADMINISTRATIVE DOCUMENTATION SUPPORT ONLY.
 It does NOT perform clinical triage, provide medical advice, or make clinical decisions.
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
+from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel, Field
+from typing import Optional, List
+from datetime import datetime
 import tempfile
 import logging
 import asyncio
@@ -30,6 +32,9 @@ from app.models.ner_service import get_ner_service
 from app.models.fhir_service import get_fhir_service
 from app.models.streaming_asr import StreamingASRSession
 from app.utils.audio_handler import AudioHandler
+
+from app.db.database import engine, Base, get_db
+from app.db import crud
 
 # Configure logging
 logging.basicConfig(
@@ -107,12 +112,43 @@ class FHIRPushRequest(BaseModel):
     auth_token: Optional[str] = None
 
 
+class SessionResponse(BaseModel):
+    id: str
+    created_at: datetime
+    patient_name: Optional[str] = None
+    transcript: str
+    detected_language: str
+    chief_complaint: Optional[str] = None
+    soap_subjective: Optional[str] = None
+    soap_objective: Optional[str] = None
+    soap_assessment: Optional[str] = None
+    soap_plan: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+class SessionCreateRequest(BaseModel):
+    patient_name: Optional[str] = None
+    transcript: str
+    detected_language: str = "en"
+    chief_complaint: Optional[str] = None
+    soap_subjective: Optional[str] = None
+    soap_objective: Optional[str] = None
+    soap_assessment: Optional[str] = None
+    soap_plan: Optional[str] = None
+
+
 # Startup event to preload models
 @app.on_event("startup")
 async def startup_event():
-    """Preload ML models at server startup."""
-    logger.info("🚀 Starting model preload...")
+    """Preload ML models at server startup and init DB."""
+    logger.info("🚀 Starting server initialization...")
     try:
+        # Init DB tables
+        logger.info("Initializing database tables...")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            
         logger.info("Loading MedASR model...")
         medasr = get_medasr_service()
         logger.info(f"✅ MedASR ready: {medasr.is_ready()}")
@@ -617,6 +653,50 @@ async def fhir_push(request: FHIRPushRequest):
     except Exception as e:
         logger.error(f"FHIR push failed: {e}")
         raise HTTPException(status_code=500, detail=f"FHIR push failed: {str(e)}")
+
+
+# =====================================================
+# SESSION HISTORY ENDPOINTS
+# =====================================================
+
+@app.post("/api/sessions", response_model=SessionResponse)
+async def save_session(request: SessionCreateRequest, db: AsyncSession = Depends(get_db)):
+    """Save a new patient intake session."""
+    try:
+        db_session = await crud.create_session(db=db, session_data=request.dict())
+        return db_session
+    except Exception as e:
+        logger.error(f"Failed to save session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sessions", response_model=List[SessionResponse])
+async def list_sessions(skip: int = 0, limit: int = 50, db: AsyncSession = Depends(get_db)):
+    """Retrieve a list of past sessions."""
+    try:
+        sessions = await crud.get_sessions(db=db, skip=skip, limit=limit)
+        return sessions
+    except Exception as e:
+        logger.error(f"Failed to retrieve sessions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sessions/{session_id}", response_model=SessionResponse)
+async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
+    """Retrieve a specific session by ID."""
+    db_session = await crud.get_session_by_id(db=db, session_id=session_id)
+    if db_session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return db_session
+
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: str, db: AsyncSession = Depends(get_db)):
+    """Delete a specific session."""
+    success = await crud.delete_session(db=db, session_id=session_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"status": "success"}
 
 
 # Root endpoint - serve index.html

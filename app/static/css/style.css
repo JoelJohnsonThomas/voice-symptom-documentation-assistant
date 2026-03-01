@@ -3166,6 +3166,129 @@ body.theme-light .theme-toggle-btn .theme-icon-moon {
 .html2pdf__page-break {
     page-break-before: always;
 }
+
+/* =====================================================
+   HISTORY VIEW STYLES
+   ===================================================== */
+.history-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+    padding: 10px;
+}
+
+.history-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.history-card:hover {
+    border-color: var(--violet-500);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2), 0 0 15px var(--violet-glow);
+}
+
+.history-card:focus {
+    outline: 2px solid var(--violet-500);
+}
+
+.history-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 10px;
+}
+
+.history-card-header h4 {
+    margin: 0 0 4px 0;
+    color: var(--text-primary);
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.history-date {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+.history-card-body {
+    flex: 1;
+}
+
+.history-card-body p {
+    margin: 0 0 6px 0;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.history-card-body strong {
+    color: var(--text-primary);
+}
+
+.history-card-footer {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-color);
+}
+
+.load-session-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: transparent;
+    border: none;
+    color: var(--violet-500);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    transition: background 0.2s;
+}
+
+.history-card:hover .load-session-btn {
+    background: rgba(139, 92, 246, 0.1);
+}
+
+.history-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.history-empty svg {
+    width: 64px;
+    height: 64px;
+    color: var(--empty-state-color, #334155);
+    margin-bottom: 20px;
+}
+
+.history-empty h3 {
+    margin: 0 0 8px 0;
+    color: var(--text-primary);
+    font-size: 1.2rem;
+}
+
+.history-empty p {
+    margin: 0;
+    font-size: 0.95rem;
+}
+
 /* =====================================================
    PWA & OFFLINE STYLES
    ===================================================== */
@@ -3182,7 +3305,7 @@ body.theme-light .theme-toggle-btn .theme-icon-moon {
     font-weight: 600;
 }
 
-[data-theme=""high-contrast""] .offline-badge {
+[data-theme="" high-contrast""] .offline-badge {
     background: #000;
     border: 1px solid #ff00ff;
     color: #ff00ff;
@@ -3214,14 +3337,14 @@ body.theme-light .theme-toggle-btn .theme-icon-moon {
     box-shadow: 0 6px 16px var(--violet-glow);
 }
 
-[data-theme=""high-contrast""] .install-app-btn {
+[data-theme="" high-contrast""] .install-app-btn {
     background: #ffff00;
     color: #000;
     border: 2px solid #ffff00;
     box-shadow: none;
 }
 
-[data-theme=""high-contrast""] .install-app-btn:hover {
+[data-theme="" high-contrast""] .install-app-btn:hover {
     background: #000;
     color: #ffff00;
 }
@@ -3298,7 +3421,7 @@ body.theme-light .theme-toggle-btn .theme-icon-moon {
     border: 1px solid rgba(239, 68, 68, 0.2);
 }
 
-[data-theme=""high-contrast""] .entity-condition {
+[data-theme="" high-contrast""] .entity-condition {
     background: #000;
     color: #ff00ff;
     border: 1px solid #ff00ff;
@@ -3311,7 +3434,7 @@ body.theme-light .theme-toggle-btn .theme-icon-moon {
     border: 1px solid rgba(124, 58, 237, 0.2);
 }
 
-[data-theme=""high-contrast""] .entity-medication {
+[data-theme="" high-contrast""] .entity-medication {
     background: #000;
     color: #00ffff;
     border: 1px solid #00ffff;
@@ -3363,8 +3486,15 @@ body.theme-light .theme-toggle-btn .theme-icon-moon {
 }
 
 @keyframes modalSlideIn {
-    from { opacity: 0; transform: translateY(-20px) scale(0.97); }
-    to   { opacity: 1; transform: translateY(0) scale(1); }
+    from {
+        opacity: 0;
+        transform: translateY(-20px) scale(0.97);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
 }
 
 .ehr-modal-header {

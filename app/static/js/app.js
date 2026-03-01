@@ -716,8 +716,9 @@ function setupNavigation() {
     const historyBtn = document.querySelector('[data-tab="history"]');
 
     // Views
-    const contentView = document.querySelector('.content-grid');
+    const dashboardView = document.getElementById('dashboardView');
     const settingsView = document.getElementById('settingsView');
+    const historyView = document.getElementById('historyView');
 
     function setActiveTab(activeBtn) {
         [dashboardBtn, settingsBtn, historyBtn].forEach(btn => {
@@ -737,30 +738,141 @@ function setupNavigation() {
     if (dashboardBtn) {
         dashboardBtn.addEventListener('click', () => {
             setActiveTab(dashboardBtn);
-            if (contentView) contentView.classList.remove('hidden');
+            if (dashboardView) dashboardView.classList.remove('hidden');
+            if (historyView) historyView.classList.add('hidden');
             if (settingsView) settingsView.classList.add('hidden');
         });
         dashboardBtn.addEventListener('keydown', (e) => handleNavKeydown(e, dashboardBtn));
     }
 
+    if (historyBtn) {
+        historyBtn.addEventListener('click', () => {
+            setActiveTab(historyBtn);
+            if (dashboardView) dashboardView.classList.add('hidden');
+            if (historyView) historyView.classList.remove('hidden');
+            if (settingsView) settingsView.classList.add('hidden');
+            renderHistoryView();
+        });
+        historyBtn.addEventListener('keydown', (e) => handleNavKeydown(e, historyBtn));
+    }
+
     if (settingsBtn) {
         settingsBtn.addEventListener('click', () => {
             setActiveTab(settingsBtn);
-            if (contentView) contentView.classList.add('hidden');
+            if (dashboardView) dashboardView.classList.add('hidden');
+            if (historyView) historyView.classList.add('hidden');
             if (settingsView) settingsView.classList.remove('hidden');
             // Re-draw graph if needed
             setupNeuralGraph();
         });
         settingsBtn.addEventListener('keydown', (e) => handleNavKeydown(e, settingsBtn));
     }
+}
 
-    // History placeholder
-    if (historyBtn) {
-        historyBtn.addEventListener('click', () => {
-            setActiveTab(historyBtn);
-            alert('History feature coming soon in v2.0');
+function renderHistoryView() {
+    const historyGrid = document.getElementById('historyGrid');
+    const emptyState = document.getElementById('historyEmptyState');
+    if (!historyGrid || !emptyState) return;
+
+    if (!state.sessionHistory || state.sessionHistory.length === 0) {
+        historyGrid.innerHTML = '';
+        historyGrid.classList.add('hidden');
+        emptyState.classList.remove('hidden');
+        return;
+    }
+
+    emptyState.classList.add('hidden');
+    historyGrid.classList.remove('hidden');
+
+    historyGrid.innerHTML = state.sessionHistory.map(session => {
+        const date = new Date(session.timestamp);
+        const displayDate = date.toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+        const displayTime = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        return `
+        <div class="history-card" data-id="${session.id}" role="button" tabindex="0">
+            <div class="history-card-header">
+                <div>
+                    <h4>${escapeHTML(truncate(session.chiefComplaint, 40))}</h4>
+                    <span class="history-date">${displayDate} at ${displayTime}</span>
+                </div>
+                <div class="doc-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <polyline points="14 2 14 8 20 8" />
+                        <line x1="16" y1="13" x2="8" y2="13" />
+                        <line x1="16" y1="17" x2="8" y2="17" />
+                        <polyline points="10 9 9 9 8 9" />
+                    </svg>
+                </div>
+            </div>
+            <div class="history-card-body">
+                <p><strong>Subjective:</strong> ${escapeHTML(truncate(session.soapS || '', 80))}</p>
+                <p><strong>Assessment:</strong> ${escapeHTML(truncate(session.soapA || '', 80))}</p>
+            </div>
+            <div class="history-card-footer">
+                <button class="load-session-btn" data-id="${session.id}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                        <polyline points="9 18 15 12 9 6" />
+                    </svg>
+                    View Details
+                </button>
+            </div>
+        </div>
+        `;
+    }).join('');
+
+    // Attach click listeners to load session
+    document.querySelectorAll('.history-card').forEach(card => {
+        const id = card.getAttribute('data-id');
+        card.addEventListener('click', (e) => loadSessionIntoDashboard(id));
+        card.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                loadSessionIntoDashboard(id);
+            }
         });
-        historyBtn.addEventListener('keydown', (e) => handleNavKeydown(e, historyBtn));
+    });
+}
+
+async function loadSessionIntoDashboard(sessionId) {
+    try {
+        const response = await fetch(\`/api/sessions/\${sessionId}\`);
+        if (!response.ok) throw new Error('Failed to fetch session');
+        
+        const session = await response.json();
+        
+        // Populate UI
+        elements.transcriptionText.textContent = session.transcript || 'N/A';
+        
+        // Mock documentation object shape for displayResults
+        const mockData = {
+            transcript: session.transcript || 'N/A',
+            detected_language: session.detected_language || 'en',
+            documentation: {
+                chief_complaint: session.chief_complaint || 'N/A',
+                symptom_details: {
+                    symptoms_mentioned: "Loaded from history",
+                    onset: "N/A", duration: "N/A", location: "N/A", aggravating_factors: "N/A", severity_description: "N/A"
+                },
+                soap_note_subjective: session.soap_subjective || '',
+                soap_note_objective: session.soap_objective || '',
+                soap_note_assessment: session.soap_assessment || '',
+                soap_note_plan: session.soap_plan || ''
+            },
+            extracted_entities: { conditions: [], medications: [] }
+        };
+        
+        state.currentDocumentation = mockData;
+        displayResults(mockData);
+        
+        // Switch to dashboard view
+        const dashboardBtn = document.querySelector('[data-tab="dashboard"]');
+        if (dashboardBtn) dashboardBtn.click();
+        
+    } catch (e) {
+        console.error("Failed to load session into dashboard", e);
+        alert("Failed to load session details.");
     }
 }
 
@@ -912,7 +1024,7 @@ function updateRecordingTime() {
     const seconds = (elapsed % 60).toString().padStart(2, '0');
 
     if (elements.recordingTime) {
-        elements.recordingTime.textContent = `${minutes}:${seconds}`;
+        elements.recordingTime.textContent = `${ minutes }: ${ seconds }`;
     }
 }
 
@@ -993,7 +1105,7 @@ function handleImageSelection(file) {
     // Validate file size (10MB max)
     const maxSize = 10 * 1024 * 1024;
     if (file.size > maxSize) {
-        alert(`File is too large (${(file.size / (1024 * 1024)).toFixed(1)}MB). Max allowed size is 10MB.`);
+        alert(`File is too large(${(file.size / (1024 * 1024)).toFixed(1)}MB). Max allowed size is 10MB.`);
         return;
     }
 
@@ -1035,7 +1147,7 @@ function formatBytes(bytes, decimals = 1) {
     const dm = decimals < 0 ? 0 : decimals;
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+    return `${ parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) } ${ sizes[i] } `;
 }
 
 function updateSubmitButton() {
@@ -1091,7 +1203,7 @@ async function processInput() {
 
             if (!imgResponse.ok) {
                 const errorData = await imgResponse.json();
-                throw new Error(`Image analysis failed: ${errorData.detail || 'Unknown error'}`);
+                throw new Error(`Image analysis failed: ${ errorData.detail || 'Unknown error' } `);
             }
 
             const imgResult = await imgResponse.json();
@@ -1173,7 +1285,7 @@ async function processInput() {
 
                 if (!response.ok) {
                     const errorData = await response.json();
-                    throw new Error(`Documentation generation failed: ${errorData.detail || 'Unknown error'}`);
+                    throw new Error(`Documentation generation failed: ${ errorData.detail || 'Unknown error' } `);
                 }
 
                 let data = await response.json();
@@ -1248,10 +1360,10 @@ function showError(message) {
 
     // Create error display
     const errorHtml = `
-        <div style="padding: 20px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 12px; color: #dc2626;">
-            <strong>Error:</strong> ${message}
-        </div>
-    `;
+        < div style = "padding: 20px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 12px; color: #dc2626;" >
+            <strong>Error:</strong> ${ message }
+        </div >
+        `;
 
     if (elements.resultsContainer) {
         elements.resultsContainer.innerHTML = errorHtml;
@@ -1304,14 +1416,14 @@ function displayResults(data) {
             : (details.symptoms_mentioned || 'not specified');
 
         elements.symptomDetails.innerHTML = `
-            <ul>
+        < ul >
                 <li><strong>Symptoms:</strong> ${symptomsText}</li>
                 <li><strong>Onset:</strong> ${details.onset || 'not specified'}</li>
                 <li><strong>Duration:</strong> ${details.duration || 'not specified'}</li>
                 <li><strong>Location:</strong> ${details.location || 'not specified'}</li>
                 <li><strong>Aggravating Factors:</strong> ${details.aggravating_factors || 'not specified'}</li>
                 <li><strong>Severity:</strong> ${details.severity_description || 'not specified'}</li>
-            </ul>
+            </ul >
         `;
     }
 
@@ -1338,13 +1450,13 @@ function displayResults(data) {
             const reader = new FileReader();
             reader.onload = (e) => {
                 elements.imageFindingsThumbnailContainer.innerHTML = `
-                    <img src="${e.target.result}" class="findings-thumbnail" alt="Uploaded finding">
-                    <div class="findings-meta">
-                        <strong>Uploaded Document</strong>
-                        <span>Body Area: ${state.imageAnalysis.body_area || 'Not specified'}</span><br>
-                        <span>Size: ${formatBytes(state.uploadedImageFile.size)}</span>
-                    </div>
-                `;
+        < img src = "${e.target.result}" class="findings-thumbnail" alt = "Uploaded finding" >
+            <div class="findings-meta">
+                <strong>Uploaded Document</strong>
+                <span>Body Area: ${state.imageAnalysis.body_area || 'Not specified'}</span><br>
+                    <span>Size: ${formatBytes(state.uploadedImageFile.size)}</span>
+            </div>
+    `;
                 elements.imageFindingsThumbnailContainer.classList.add('active');
             };
             reader.readAsDataURL(state.uploadedImageFile);
@@ -1403,17 +1515,17 @@ function displayNEREntities(entities) {
 
     const totalCount = (entities.conditions?.length || 0) + (entities.medications?.length || 0);
     if (elements.nerEntityCount) {
-        elements.nerEntityCount.textContent = `${totalCount} ${totalCount === 1 ? 'entity' : 'entities'}`;
+        elements.nerEntityCount.textContent = `${ totalCount } ${ totalCount === 1 ? 'entity' : 'entities' } `;
     }
 
     // Render Conditions
     if (elements.nerConditionBadges) {
         if (entities.conditions && entities.conditions.length > 0) {
             elements.nerConditionBadges.innerHTML = entities.conditions.map(ent =>
-                `<span class="entity-badge entity-condition" title="${ent.system}: ${ent.code}">
+                `< span class="entity-badge entity-condition" title = "${ent.system}: ${ent.code}" >
                     <span class="entity-name">${escapeHTML(ent.text)}</span>
                     <span class="entity-code">${ent.system}: ${ent.code}</span>
-                </span>`
+                </span > `
             ).join('');
             document.getElementById('nerConditions')?.classList.remove('hidden');
         } else {
@@ -1425,10 +1537,10 @@ function displayNEREntities(entities) {
     if (elements.nerMedicationBadges) {
         if (entities.medications && entities.medications.length > 0) {
             elements.nerMedicationBadges.innerHTML = entities.medications.map(ent =>
-                `<span class="entity-badge entity-medication" title="${ent.system}: ${ent.code}">
+                `< span class="entity-badge entity-medication" title = "${ent.system}: ${ent.code}" >
                     <span class="entity-name">${escapeHTML(ent.text)}</span>
                     <span class="entity-code">${ent.system}: ${ent.code}</span>
-                </span>`
+                </span > `
             ).join('');
             document.getElementById('nerMedications')?.classList.remove('hidden');
         } else {
@@ -1480,27 +1592,27 @@ async function copyToClipboard() {
     const soapP = elements.soapP?.textContent || doc.soap_note_plan || 'N/A';
 
     const text = `
-CHIEF COMPLAINT: ${doc.chief_complaint}
+CHIEF COMPLAINT: ${ doc.chief_complaint }
 
 SYMPTOM DETAILS:
-- Symptoms: ${Array.isArray(doc.symptom_details?.symptoms_mentioned) ? doc.symptom_details.symptoms_mentioned.join(', ') : (doc.symptom_details?.symptoms || 'N/A')}
-- Onset: ${doc.symptom_details?.onset || 'N/A'}
-- Duration: ${doc.symptom_details?.duration || 'N/A'}
-- Location: ${doc.symptom_details?.location || 'N/A'}
+    - Symptoms: ${ Array.isArray(doc.symptom_details?.symptoms_mentioned) ? doc.symptom_details.symptoms_mentioned.join(', ') : (doc.symptom_details?.symptoms || 'N/A') }
+    - Onset: ${ doc.symptom_details?.onset || 'N/A' }
+    - Duration: ${ doc.symptom_details?.duration || 'N/A' }
+    - Location: ${ doc.symptom_details?.location || 'N/A' }
 
 SOAP NOTE:
 
-S (Subjective) [${state.soapApprovals.subjective.status}]:
-${soapS}
+    S(Subjective)[${ state.soapApprovals.subjective.status }]:
+${ soapS }
 
-O (Objective) [${state.soapApprovals.objective.status}]:
-${soapO}
+    O(Objective)[${ state.soapApprovals.objective.status }]:
+${ soapO }
 
-A (Assessment) [${state.soapApprovals.assessment.status}]:
-${soapA}
+    A(Assessment)[${ state.soapApprovals.assessment.status }]:
+${ soapA }
 
-P (Plan) [${state.soapApprovals.plan.status}]:
-${soapP}
+    P(Plan)[${ state.soapApprovals.plan.status }]:
+${ soapP }
     `.trim();
 
     try {
@@ -1509,9 +1621,9 @@ ${soapP}
         // Visual feedback
         const originalSvg = elements.copyBtn.innerHTML;
         elements.copyBtn.innerHTML = `
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="20 6 9 17 4 12" />
-            </svg>
+        < svg viewBox = "0 0 24 24" fill = "none" stroke = "currentColor" stroke - width="2" >
+            <polyline points="20 6 9 17 4 12" />
+            </svg >
         `;
         elements.copyBtn.style.color = '#10b981';
 
@@ -1555,7 +1667,7 @@ function exportJSON() {
 
     const a = document.createElement('a');
     a.href = url;
-    a.download = `voxdoc_${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `voxdoc_${ new Date().toISOString().slice(0, 10) }.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1586,7 +1698,7 @@ async function downloadFHIRBundle() {
 
         const a = document.createElement('a');
         a.href = url;
-        a.download = `fhir_bundle_${new Date().toISOString().slice(0, 10)}.json`;
+        a.download = `fhir_bundle_${ new Date().toISOString().slice(0, 10) }.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -1626,11 +1738,11 @@ async function pushToEHR() {
         const result = await response.json();
 
         if (result.success) {
-            alert(`Success! Bundle pushed to EHR (Status: ${result.status_code})`);
+            alert(`Success! Bundle pushed to EHR(Status: ${ result.status_code })`);
             elements.ehrModal?.classList.add('hidden');
         } else {
             console.error(result.error);
-            alert(`Failed to push to EHR: ${result.error}`);
+            alert(`Failed to push to EHR: ${ result.error } `);
         }
     } catch (error) {
         console.error("EHR Push error:", error);
@@ -1638,11 +1750,11 @@ async function pushToEHR() {
     } finally {
         elements.ehrModalSubmit.disabled = false;
         elements.ehrModalSubmit.innerHTML = `
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" aria-hidden="true">
+        < svg viewBox = "0 0 24 24" fill = "none" stroke = "currentColor" stroke - width="2" width = "14" height = "14" aria - hidden="true" >
                 <polyline points="16 6 12 2 8 6" />
                 <line x1="12" y1="2" x2="12" y2="15" />
-            </svg>
-            Push Bundle
+            </svg >
+        Push Bundle
         `;
     }
 }
@@ -1849,10 +1961,10 @@ function updateSOAPOverallStatus() {
         elements.soapOverallStatus.textContent = 'All sections approved ✓';
         elements.soapOverallStatus.className = 'badge success';
     } else if (rejectedCount > 0) {
-        elements.soapOverallStatus.textContent = `${rejectedCount} rejected · ${total - approvedCount - rejectedCount} pending`;
+        elements.soapOverallStatus.textContent = `${ rejectedCount } rejected · ${ total - approvedCount - rejectedCount } pending`;
         elements.soapOverallStatus.className = 'badge warning';
     } else {
-        elements.soapOverallStatus.textContent = `${total - approvedCount} of ${total} pending review`;
+        elements.soapOverallStatus.textContent = `${ total - approvedCount } of ${ total } pending review`;
         elements.soapOverallStatus.className = 'badge info';
     }
 }
@@ -1891,7 +2003,7 @@ function handleSOAPReject(section) {
     card?.classList.add('rejected');
     rejectBtn.classList.add('rejected');
     rejectBtn.querySelector('span').textContent = 'Rejected';
-    logSOAPHistory(section, 'rejected', reason ? `Rejected: ${reason}` : 'Rejected by clinician');
+    logSOAPHistory(section, 'rejected', reason ? `Rejected: ${ reason } ` : 'Rejected by clinician');
 
     if (statusBadge) {
         statusBadge.textContent = '✗ Rejected';
@@ -1953,13 +2065,13 @@ function renderSOAPHistory(section) {
     // Build original AI text block
     const isSymptomDetails = section === 'clinical_details';
     const originalBlock = data.originalText
-        ? `<div class="soap-history-original">
-               <div style="display: flex; align-items: center; margin-bottom: 4px;">
-                   <div class="soap-history-original-label">Original AI Output</div>
-                   <button class="soap-history-restore-btn" onclick="restoreOriginalSOAP('${section}')">Restore</button>
-               </div>
-               ${isSymptomDetails ? data.originalText : escapeHTML(data.originalText)}
-           </div>`
+        ? `< div class="soap-history-original" >
+        <div style="display: flex; align-items: center; margin-bottom: 4px;">
+            <div class="soap-history-original-label">Original AI Output</div>
+            <button class="soap-history-restore-btn" onclick="restoreOriginalSOAP('${section}')">Restore</button>
+        </div>
+               ${ isSymptomDetails ? data.originalText : escapeHTML(data.originalText) }
+           </div > `
         : '';
 
     // Build timeline
@@ -1974,15 +2086,15 @@ function renderSOAPHistory(section) {
             let detail = '';
             if (e.text) {
                 const plainText = e.text.replace(/<[^>]*>?/gm, ''); // Strip HTML for list items in history
-                detail = ` — ${escapeHTML(truncate(plainText, 120))}`;
+                detail = ` — ${ escapeHTML(truncate(plainText, 120)) } `;
             }
-            return `<li class="soap-history-entry">
+            return `< li class="soap-history-entry" >
                         <span class="soap-history-dot ${dotClass}"></span>
                         <span class="soap-history-time">${time}</span>
                         <span class="soap-history-action"><strong>${actionLabel}</strong>${detail}</span>
-                    </li>`;
+                    </li > `;
         }).join('');
-        timeline = `<ul class="soap-history-timeline">${items}</ul>`;
+        timeline = `< ul class="soap-history-timeline" > ${ items }</ul > `;
     }
 
     historyEl.innerHTML = originalBlock + timeline;
@@ -1995,7 +2107,7 @@ function restoreOriginalSOAP(section) {
     const data = state.soapApprovals[section];
     if (!data || !data.originalText) return;
 
-    if (!confirm(`Are you sure you want to restore the original ${section.replace('_', ' ')}? Current edits will be lost.`)) {
+    if (!confirm(`Are you sure you want to restore the original ${ section.replace('_', ' ') }? Current edits will be lost.`)) {
         return;
     }
 
@@ -2109,44 +2221,59 @@ function getSOAPHistoryEl(section) {
 // SESSION HISTORY & PDF EXPORT
 // =====================================================
 
-function loadSessionHistory() {
+async function loadSessionHistory() {
     try {
-        const stored = localStorage.getItem('voxdoc_sessions');
-        if (stored) {
-            state.sessionHistory = JSON.parse(stored);
+        const response = await fetch('/api/sessions');
+        if (response.ok) {
+            const data = await response.json();
+            // Map the DB fields to what the UI expects
+            state.sessionHistory = data.map(session => ({
+                id: session.id,
+                timestamp: session.created_at,
+                patientName: session.patient_name || "Patient",
+                chiefComplaint: session.chief_complaint || "N/A",
+                clinicalDetails: "N/A", // This is not stored directly, could extract from SOAP
+                visualFindings: "",
+                soapS: session.soap_subjective || "",
+                soapO: session.soap_objective || "",
+                soapA: session.soap_assessment || "",
+                soapP: session.soap_plan || ""
+            }));
             updateRecentDocsUI();
+            if (typeof renderHistoryView === 'function') {
+                renderHistoryView();
+            }
         }
     } catch (e) {
         console.error('Failed to load session history', e);
     }
 }
 
-function saveSessionToHistory() {
+async function saveSessionToHistory() {
     if (!state.currentDocumentation) return;
 
     const doc = state.currentDocumentation.documentation;
     const sessionData = {
-        id: Date.now().toString(),
-        timestamp: new Date().toISOString(),
-        patientName: "Patient " + Math.floor(Math.random() * 1000), // Placeholder
-        chiefComplaint: doc.chief_complaint || 'N/A',
-        clinicalDetails: elements.symptomDetails?.innerHTML || 'N/A',
-        visualFindings: elements.visualFindings ? elements.visualFindings.textContent : '',
-        soapS: elements.soapS ? elements.soapS.textContent : doc.soap_note_subjective,
-        soapO: elements.soapO ? elements.soapO.textContent : doc.soap_note_objective,
-        soapA: elements.soapA ? elements.soapA.textContent : doc.soap_note_assessment,
-        soapP: elements.soapP ? elements.soapP.textContent : doc.soap_note_plan
+        patient_name: "Patient " + Math.floor(Math.random() * 1000), // Placeholder
+        transcript: elements.transcriptionText ? elements.transcriptionText.textContent : 'N/A',
+        detected_language: state.currentDocumentation.detected_language || 'en',
+        chief_complaint: doc.chief_complaint || 'N/A',
+        soap_subjective: elements.soapS ? elements.soapS.textContent : doc.soap_note_subjective,
+        soap_objective: elements.soapO ? elements.soapO.textContent : doc.soap_note_objective,
+        soap_assessment: elements.soapA ? elements.soapA.textContent : doc.soap_note_assessment,
+        soap_plan: elements.soapP ? elements.soapP.textContent : doc.soap_note_plan
     };
 
-    // Prepend to history, max 15 items
-    state.sessionHistory.unshift(sessionData);
-    if (state.sessionHistory.length > 15) {
-        state.sessionHistory.pop();
-    }
-
     try {
-        localStorage.setItem('voxdoc_sessions', JSON.stringify(state.sessionHistory));
-        updateRecentDocsUI();
+        const response = await fetch('/api/sessions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sessionData)
+        });
+
+        if (response.ok) {
+            await loadSessionHistory();
+        }
     } catch (e) {
         console.error('Failed to save session to history', e);
     }
@@ -2157,7 +2284,7 @@ function updateRecentDocsUI() {
     if (!listEl) return;
 
     if (state.sessionHistory.length === 0) {
-        listEl.innerHTML = `<div class="recent-doc-item" style="color: var(--text-muted); font-style: italic; font-size: 0.8rem; justify-content: center; border: none;">No recent sessions</div>`;
+        listEl.innerHTML = `< div class="recent-doc-item" style = "color: var(--text-muted); font-style: italic; font-size: 0.8rem; justify-content: center; border: none;" > No recent sessions</div > `;
         return;
     }
 
@@ -2165,10 +2292,10 @@ function updateRecentDocsUI() {
         const date = new Date(session.timestamp);
         const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         const dateStr = date.toLocaleDateString();
-        const displayTime = date.toDateString() === new Date().toDateString() ? `Today, ${timeStr}` : `${dateStr}, ${timeStr}`;
+        const displayTime = date.toDateString() === new Date().toDateString() ? `Today, ${ timeStr } ` : `${ dateStr }, ${ timeStr } `;
 
         return `
-        <div class="recent-doc-item" data-id="${session.id}" role="button" tabindex="0">
+        < div class="recent-doc-item" data - id="${session.id}" role = "button" tabindex = "0" onclick = "loadSessionIntoDashboard('${session.id}')" onkeydown = "if(event.key==='Enter'||event.key===' ') { event.preventDefault(); loadSessionIntoDashboard('${session.id}'); }" >
             <div class="doc-icon">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -2182,7 +2309,7 @@ function updateRecentDocsUI() {
                 <div class="doc-title">${truncate(session.chiefComplaint, 25)}</div>
                 <div class="doc-date">${displayTime}</div>
             </div>
-        </div>
+        </div >
         `;
     }).join('');
 }
@@ -2247,7 +2374,7 @@ function exportSinglePDF(session) {
 
     const opt = {
         margin: 0,
-        filename: `VoxDoc_Report_${session.id}.pdf`,
+        filename: `VoxDoc_Report_${ session.id }.pdf`,
         image: { type: 'jpeg', quality: 0.98 },
         html2canvas: { scale: 2 },
         jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' }
@@ -2284,7 +2411,7 @@ function batchExportPDF() {
 
     const opt = {
         margin: 0,
-        filename: `VoxDoc_Batch_Reports_${Date.now()}.pdf`,
+        filename: `VoxDoc_Batch_Reports_${ Date.now() }.pdf`,
         image: { type: 'jpeg', quality: 0.98 },
         html2canvas: { scale: 2 },
         jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' }
