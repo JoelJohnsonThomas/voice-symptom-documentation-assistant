@@ -12,15 +12,20 @@ This project was built to demonstrate how **specialized medical AI models** (Med
 
 ## ✨ Key Features
 
-- **🗣️ Voice-First Interface:** Browser-based audio recording with real-time visualization.
-- **📝 Medical Transcription:** Utilizes **Google's MedASR** for highly accurate medical speech-to-text.
-- **🧠 Intelligent Extraction:** Uses **MedGemma 1.5** (LLM) to extract:
-  - Chief Complaint
-  - Symptom Details (Onset, Duration, Severity, Location)
-  - Patient Uncertainty ("maybe", "not sure")
-- **📋 Automated Documentation:** Generates a professional **SOAP Note (Subjective)** section.
-- **✅ Verification Loop:** Includes original audio playback for clinicians to verify transcription accuracy.
+- **🗣️ Voice & Live Streaming Interface:** Browser-based real-time audio recording with WebSocket streaming transcription.
+- **🌍 Multi-Language Support:** Auto-detects spoken languages (via Whisper) and generates bilingual SOAP notes alongside English.
+- **📝 Medical Transcription:** Utilizes **Google's MedASR** and **OpenAI's Whisper** for highly accurate medical speech-to-text.
+- **🧠 Intelligent Extraction & NER:** Uses **MedGemma 1.5** and **SciSpaCy** to extract:
+  - Chief Complaint & Symptom Details (Onset, Duration, Severity, Location)
+  - Medical Entities (Conditions, Medications)
+- **📋 Full Automated Documentation:** Generates complete and editable **SOAP Notes (Subjective, Objective, Assessment, Plan)**.
+- **✍️ Clinician Annotation:** Allows inline editing, approval, and rejection of generated sections with edit history tracking.
+- **🖼️ Multi-Modal Input:** Supports image uploads for visual findings analysis via MedGemma Vision.
+- **🏥 EHR / FHIR Integration:** Ready for seamless data export to major EHR systems (Epic, Cerner) via HL7 FHIR R4 Bundles.
+- **📱 Progressive Web App (PWA):** Installable on tablets and capable of offline recording with background sync.
+- **🎨 Custom Theming & Accessibility:** Multiple themes (High Contrast, Light, Dark modes, etc) and fully WCAG 2.1 AA compliant.
 - **🛡️ Compliance-Focused:** Explicitly designed as an administrative aid (non-diagnostic), with mandatory clinician review flags.
+- **📄 Export Options:** Includes professional Print-ready PDF reports and JSON exports.
 
 ## 🛠️ Technology Stack
 
@@ -31,12 +36,14 @@ This project was built to demonstrate how **specialized medical AI models** (Med
 - **Transformers (Hugging Face)** - Model management
 
 ### AI Models
-- **ASR:** `nvidia/stt_en_conformer_transducer_xlarge` (or Google MedASR equivalent)
-- **LLM:** `google/medgemma-1.5-2b` (Medical-tuned Gemma model)
+- **ASR (English):** `google/medasr`
+- **ASR (Multilingual):** `openai/whisper-small`
+- **LLM / Vision:** `google/medgemma-1.5-4b-it` & `google/medgemma-4b-it`
+- **NER:** `scispacy` (`en_core_sci_sm`, `en_ner_bc5cdr_md`)
 
 ### Frontend
-- **HTML5 / CSS3** - Custom "Medical Grade" design system (Inter font, accessibility focused)
-- **JavaScript (Vanilla)** - Audio recording API, canvas visualization, async state management
+- **HTML5 / CSS3** - Custom "Medical Grade" design system (Dark/Light modes, High Contrast, Inter font, WCAG 2.1 AA)
+- **JavaScript (Vanilla)** - WebSocket real-time audio, PWA Service Workers, canvas visualization
 
 ## 🚀 Getting Started
 
