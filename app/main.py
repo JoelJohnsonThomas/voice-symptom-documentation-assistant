@@ -26,6 +26,13 @@ import numpy as np
 from pathlib import Path
 
 from app.config import settings
+from app.compliance import (
+    enforce_medgemma_terms_acknowledgement,
+    is_medgemma_terms_usable,
+    build_compliance_notice,
+    build_compliance_metadata,
+    sanitize_session_payload,
+)
 from app.models.medasr_service import get_medasr_service
 from app.models.medgemma_service import get_medgemma_service
 from app.models.ner_service import get_ner_service
@@ -86,6 +93,7 @@ class DocumentationResponse(BaseModel):
     extracted_entities: dict
     requires_clinician_review: bool
     compliance_notice: str
+    compliance_metadata: dict
 
 
 class VoiceIntakeResponse(BaseModel):
@@ -95,6 +103,7 @@ class VoiceIntakeResponse(BaseModel):
     duration_seconds: float
     requires_clinician_review: bool
     compliance_notice: str
+    compliance_metadata: dict
     detected_language: Optional[str] = "en"
 
 
@@ -153,9 +162,14 @@ async def startup_event():
         medasr = get_medasr_service()
         logger.info(f"✅ MedASR ready: {medasr.is_ready()}")
         
-        logger.info("Loading MedGemma model...")
-        medgemma = get_medgemma_service()
-        logger.info(f"✅ MedGemma ready: {medgemma.is_ready()}")
+        if is_medgemma_terms_usable():
+            logger.info("Loading MedGemma model...")
+            medgemma = get_medgemma_service()
+            logger.info(f"✅ MedGemma ready: {medgemma.is_ready()}")
+        else:
+            logger.warning(
+                "Skipping MedGemma preload: terms acknowledgement gate is enabled and not acknowledged."
+            )
         
         logger.info("Loading Medical NER model...")
         ner = get_ner_service()
@@ -173,16 +187,22 @@ async def health_check():
     """Check if services are ready."""
     try:
         medasr = get_medasr_service()
-        medgemma = get_medgemma_service()
-        
+        medgemma_ready = False
+        vision_ready = False
+        if is_medgemma_terms_usable():
+            medgemma = get_medgemma_service()
+            medgemma_ready = medgemma.is_ready()
+            vision_ready = medgemma.is_vision_ready()
+
         return {
             "status": "healthy",
             "medasr_ready": medasr.is_ready(),
-            "medgemma_ready": medgemma.is_ready(),
+            "medgemma_ready": medgemma_ready,
             "ner_ready": get_ner_service().is_ready,
-            "vision_ready": medgemma.is_vision_ready(),
+            "vision_ready": vision_ready,
             "device": settings.device,
-            "gpu_enabled": settings.enable_gpu
+            "gpu_enabled": settings.enable_gpu,
+            "compliance_metadata": build_compliance_metadata(),
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -261,6 +281,8 @@ async def generate_documentation(request: DocumentationRequest):
     """
     try:
         logger.info("Generating documentation from transcript")
+
+        enforce_medgemma_terms_acknowledgement()
         
         if not request.transcript or len(request.transcript.strip()) < 10:
             raise HTTPException(
@@ -285,12 +307,11 @@ async def generate_documentation(request: DocumentationRequest):
             documentation=documentation,
             extracted_entities=extracted_entities,
             requires_clinician_review=True,
-            compliance_notice=(
-                "This is administrative documentation only. "
-                "All clinical decisions must be made by qualified healthcare professionals."
-            )
+            compliance_notice=build_compliance_notice(),
+            compliance_metadata=build_compliance_metadata(),
         )
-        
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Documentation generation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -312,6 +333,8 @@ async def analyze_image(image: UploadFile = File(...)):
         Image analysis results with visual findings
     """
     try:
+        enforce_medgemma_terms_acknowledgement()
+
         # Validate file type
         allowed_types = {'image/jpeg', 'image/png', 'image/webp', 'image/jpg'}
         if image.content_type and image.content_type not in allowed_types:
@@ -347,10 +370,8 @@ async def analyze_image(image: UploadFile = File(...)):
         return JSONResponse(content={
             "image_analysis": analysis,
             "requires_clinician_review": True,
-            "compliance_notice": (
-                "Image analysis is descriptive only. "
-                "All visual findings must be verified by a qualified healthcare professional."
-            )
+            "compliance_notice": build_compliance_notice(),
+            "compliance_metadata": build_compliance_metadata(),
         })
         
     except HTTPException:
@@ -378,6 +399,8 @@ async def voice_intake(audio: UploadFile = File(...)):
     temp_file = None
     try:
         logger.info(f"Starting voice intake for: {audio.filename}")
+
+        enforce_medgemma_terms_acknowledgement()
         
         # Save uploaded file temporarily
         with tempfile.NamedTemporaryFile(delete=False, suffix=Path(audio.filename).suffix) as temp_file:
@@ -415,13 +438,12 @@ async def voice_intake(audio: UploadFile = File(...)):
             extracted_entities=extracted_entities,
             duration_seconds=duration,
             requires_clinician_review=True,
-            compliance_notice=(
-                "This is administrative documentation only. "
-                "All clinical decisions must be made by qualified healthcare professionals."
-            ),
+            compliance_notice=build_compliance_notice(),
+            compliance_metadata=build_compliance_metadata(),
             detected_language=detected_language
         )
-        
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Voice intake failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -663,7 +685,8 @@ async def fhir_push(request: FHIRPushRequest):
 async def save_session(request: SessionCreateRequest, db: AsyncSession = Depends(get_db)):
     """Save a new patient intake session."""
     try:
-        db_session = await crud.create_session(db=db, session_data=request.dict())
+        sanitized_payload = sanitize_session_payload(request.model_dump())
+        db_session = await crud.create_session(db=db, session_data=sanitized_payload)
         return db_session
     except Exception as e:
         logger.error(f"Failed to save session: {e}")

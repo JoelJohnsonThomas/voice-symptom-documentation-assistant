@@ -1602,6 +1602,20 @@ body .action-card {
     color: var(--notice-text);
 }
 
+.compliance-meta-notice {
+    margin-top: 8px;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    opacity: 0.9;
+}
+
+.reliability-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+}
+
 /* Result Sections */
 .result-section {
     padding: 16px;
@@ -1652,6 +1666,65 @@ body .action-card {
 
 .symptom-details strong {
     color: var(--result-text);
+}
+
+.confidence-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.confidence-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--result-detail-border);
+}
+
+.confidence-row:last-child {
+    border-bottom: none;
+}
+
+.confidence-field {
+    flex: 1;
+    color: var(--result-detail-text);
+    line-height: 1.45;
+}
+
+.confidence-field strong {
+    color: var(--result-text);
+}
+
+.confidence-pill {
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+    border-radius: var(--radius-full);
+    padding: 4px 10px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    border: 1px solid transparent;
+}
+
+.confidence-green {
+    background: rgba(16, 185, 129, 0.18);
+    color: #10b981;
+    border-color: rgba(16, 185, 129, 0.32);
+}
+
+.confidence-yellow {
+    background: rgba(245, 158, 11, 0.18);
+    color: #f59e0b;
+    border-color: rgba(245, 158, 11, 0.32);
+}
+
+.confidence-red {
+    background: rgba(239, 68, 68, 0.18);
+    color: #ef4444;
+    border-color: rgba(239, 68, 68, 0.32);
 }
 
 .soap-note {

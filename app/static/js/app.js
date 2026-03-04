@@ -852,15 +852,30 @@ async function loadSessionIntoDashboard(sessionId) {
             documentation: {
                 chief_complaint: session.chief_complaint || 'N/A',
                 symptom_details: {
-                    symptoms_mentioned: "Loaded from history",
+                    symptoms_mentioned: ["Loaded from history"],
                     onset: "N/A", duration: "N/A", location: "N/A", aggravating_factors: "N/A", severity_description: "N/A"
+                },
+                field_confidence: {
+                    chief_complaint: { score: 0.45, color: "yellow", verification_text: "Needs quick verification" },
+                    symptom_details: {
+                        symptoms_mentioned: { score: 0.45, color: "yellow", verification_text: "Needs quick verification" },
+                        onset: { score: 0.30, color: "red", verification_text: "Needs verification" },
+                        duration: { score: 0.30, color: "red", verification_text: "Needs verification" },
+                        location: { score: 0.30, color: "red", verification_text: "Needs verification" },
+                        aggravating_factors: { score: 0.30, color: "red", verification_text: "Needs verification" },
+                        severity_description: { score: 0.25, color: "red", verification_text: "Needs verification" }
+                    }
                 },
                 soap_note_subjective: session.soap_subjective || '',
                 soap_note_objective: session.soap_objective || '',
                 soap_note_assessment: session.soap_assessment || '',
                 soap_note_plan: session.soap_plan || ''
             },
-            extracted_entities: { conditions: [], medications: [] }
+            extracted_entities: { conditions: [], medications: [] },
+            compliance_metadata: {
+                hipaa: { minimum_necessary_mode: true },
+                medgemma_terms: { acknowledged: true }
+            }
         };
         
         state.currentDocumentation = mockData;
@@ -1401,30 +1416,16 @@ function displayResults(data) {
     }
 
     // Documentation fields
-    const doc = data.documentation;
+    const doc = data.documentation || {};
+    renderComplianceNotice(data, doc);
 
     if (elements.chiefComplaint) {
         elements.chiefComplaint.textContent = doc.chief_complaint || 'N/A';
     }
 
-    // Symptom Details - Map backend field names to display
+    // Symptom Details with field-level extraction confidence
     if (elements.symptomDetails && doc.symptom_details) {
-        const details = doc.symptom_details;
-        // symptoms_mentioned is an array, join for display
-        const symptomsText = Array.isArray(details.symptoms_mentioned)
-            ? details.symptoms_mentioned.join(', ')
-            : (details.symptoms_mentioned || 'not specified');
-
-        elements.symptomDetails.innerHTML = `
-        < ul >
-                <li><strong>Symptoms:</strong> ${symptomsText}</li>
-                <li><strong>Onset:</strong> ${details.onset || 'not specified'}</li>
-                <li><strong>Duration:</strong> ${details.duration || 'not specified'}</li>
-                <li><strong>Location:</strong> ${details.location || 'not specified'}</li>
-                <li><strong>Aggravating Factors:</strong> ${details.aggravating_factors || 'not specified'}</li>
-                <li><strong>Severity:</strong> ${details.severity_description || 'not specified'}</li>
-            </ul >
-        `;
+        elements.symptomDetails.innerHTML = buildSymptomDetailsHtml(doc);
     }
 
     // SOAP Notes + CC/CD/VI — populate and store originals
@@ -1498,6 +1499,131 @@ function displayResults(data) {
 
     // Display NER Extracted Entities
     displayNEREntities(data.extracted_entities);
+}
+
+function renderComplianceNotice(data, doc) {
+    const complianceEl = document.getElementById('complianceMetaNotice');
+    if (!complianceEl) return;
+
+    const metadata = data.compliance_metadata || doc.compliance_metadata || {};
+    const hipaa = metadata.hipaa || {};
+    const medgemmaTerms = metadata.medgemma_terms || {};
+
+    const hipaaText = hipaa.minimum_necessary_mode === false
+        ? 'PHI persistence is enabled. Validate BAA, encryption, and audit controls.'
+        : 'HIPAA minimum-necessary mode active (PHI persistence disabled).';
+    const termsText = medgemmaTerms.acknowledged
+        ? 'MedGemma terms acknowledged.'
+        : 'MedGemma terms acknowledgement pending.';
+
+    complianceEl.textContent = `${hipaaText} ${termsText}`;
+}
+
+function buildSymptomDetailsHtml(doc) {
+    const details = doc.symptom_details || {};
+    const confidenceMap = doc.field_confidence?.symptom_details || {};
+    const chiefComplaintConfidence = doc.field_confidence?.chief_complaint;
+
+    const rows = [
+        {
+            label: 'Chief Complaint',
+            value: doc.chief_complaint || 'not specified',
+            confidence: chiefComplaintConfidence
+        },
+        {
+            label: 'Symptoms',
+            value: formatSymptomFieldValue(details.symptoms_mentioned),
+            confidence: confidenceMap.symptoms_mentioned
+        },
+        {
+            label: 'Onset',
+            value: formatSymptomFieldValue(details.onset),
+            confidence: confidenceMap.onset
+        },
+        {
+            label: 'Duration',
+            value: formatSymptomFieldValue(details.duration),
+            confidence: confidenceMap.duration
+        },
+        {
+            label: 'Location',
+            value: formatSymptomFieldValue(details.location),
+            confidence: confidenceMap.location
+        },
+        {
+            label: 'Aggravating Factors',
+            value: formatSymptomFieldValue(details.aggravating_factors),
+            confidence: confidenceMap.aggravating_factors
+        },
+        {
+            label: 'Severity Description',
+            value: formatSymptomFieldValue(details.severity_description),
+            confidence: confidenceMap.severity_description
+        }
+    ];
+
+    return `<ul class="confidence-list">${rows.map(renderConfidenceRow).join('')}</ul>`;
+}
+
+function formatSymptomFieldValue(value) {
+    if (Array.isArray(value)) {
+        return value.length ? value.join(', ') : 'not specified';
+    }
+
+    if (value === null || value === undefined) {
+        return 'not specified';
+    }
+
+    const strValue = String(value).trim();
+    return strValue.length > 0 ? strValue : 'not specified';
+}
+
+function renderConfidenceRow(row) {
+    const confidence = normalizeConfidenceRecord(row.confidence);
+    const badge = buildConfidenceBadge(confidence);
+
+    return `
+        <li class="confidence-row">
+            <div class="confidence-field"><strong>${escapeHTML(row.label)}:</strong> ${escapeHTML(row.value)}</div>
+            ${badge}
+        </li>
+    `;
+}
+
+function normalizeConfidenceRecord(record) {
+    const defaultScore = 0.30;
+    const rawScore = typeof record?.score === 'number' ? record.score : defaultScore;
+    const score = Math.max(0, Math.min(1, rawScore));
+
+    let color = record?.color;
+    if (!color) {
+        color = score >= 0.8 ? 'green' : (score >= 0.55 ? 'yellow' : 'red');
+    }
+
+    const verificationText = record?.verification_text
+        || (color === 'green' ? 'High confidence' : color === 'yellow' ? 'Needs quick verification' : 'Needs verification');
+
+    return {
+        score,
+        color,
+        verificationText,
+        rationale: record?.rationale || 'No confidence metadata provided.'
+    };
+}
+
+function buildConfidenceBadge(confidence) {
+    const percent = Math.round(confidence.score * 100);
+    const colorClass = confidence.color === 'green'
+        ? 'confidence-green'
+        : confidence.color === 'yellow'
+            ? 'confidence-yellow'
+            : 'confidence-red';
+
+    return `
+        <span class="confidence-pill ${colorClass}" title="${escapeHTML(confidence.rationale)}">
+            ${escapeHTML(confidence.verificationText)} (${percent}%)
+        </span>
+    `;
 }
 
 /**

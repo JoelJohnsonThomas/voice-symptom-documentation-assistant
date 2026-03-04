@@ -9,12 +9,13 @@ All outputs are flagged for mandatory clinician review.
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoProcessor
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Tuple
 import json
 import io
 import logging
 
 from app.config import settings
+from app.compliance import build_compliance_notice, build_compliance_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +161,199 @@ class MedGemmaService:
         logger.warning("No JSON pattern found in response")
         # Return as-is if no pattern found
         return text.strip()
+
+    def _safe_log_generated_text(self, label: str, text: str, max_chars: int = 200):
+        """Log generated model text safely without exposing PHI by default."""
+        if settings.allow_phi_logging:
+            logger.info(f"{label} (length={len(text)}): {text[:max_chars]}...")
+        else:
+            logger.info(f"{label} generated (length={len(text)}). Content redacted.")
+
+    def _calibrate_confidence_score(
+        self,
+        base_score: float,
+        evidence_hits: int = 0,
+        uncertainty_penalties: int = 0
+    ) -> float:
+        """
+        Calibrate a confidence score into [0, 1] using simple evidence/penalty factors.
+        """
+        calibrated = base_score + (0.04 * min(evidence_hits, 3)) - (0.06 * uncertainty_penalties)
+        return round(max(0.05, min(0.99, calibrated)), 2)
+
+    def _build_confidence_record(self, score: float, rationale: str) -> Dict[str, Any]:
+        """Build standardized confidence metadata for one extracted field."""
+        if score >= 0.80:
+            level = "high_confidence"
+            color = "green"
+            verification_text = "High confidence"
+            needs_verification = False
+        elif score >= 0.55:
+            level = "moderate_confidence"
+            color = "yellow"
+            verification_text = "Needs quick verification"
+            needs_verification = True
+        else:
+            level = "low_confidence"
+            color = "red"
+            verification_text = "Needs verification"
+            needs_verification = True
+
+        return {
+            "score": round(score, 2),
+            "level": level,
+            "color": color,
+            "verification_text": verification_text,
+            "needs_verification": needs_verification,
+            "calibration": "rule_based_v1",
+            "rationale": rationale,
+        }
+
+    def _flatten_confidence_records(
+        self,
+        confidence_map: Dict[str, Any],
+        parent: str = ""
+    ) -> List[Tuple[str, Dict[str, Any]]]:
+        """Flatten nested confidence map to (field_path, record) tuples."""
+        flattened = []
+        for key, value in confidence_map.items():
+            path = f"{parent}.{key}" if parent else key
+            if isinstance(value, dict) and "score" in value and "color" in value:
+                flattened.append((path, value))
+            elif isinstance(value, dict):
+                flattened.extend(self._flatten_confidence_records(value, path))
+        return flattened
+
+    def _build_confidence_summary(self, confidence_map: Dict[str, Any]) -> Dict[str, Any]:
+        """Summarize confidence metadata across all extracted fields."""
+        records = self._flatten_confidence_records(confidence_map)
+        if not records:
+            return {
+                "overall_score": 0.0,
+                "color_breakdown": {"green": 0, "yellow": 0, "red": 0},
+                "high_confidence_fields": [],
+                "needs_verification_fields": [],
+                "calibration": "rule_based_v1",
+            }
+
+        color_breakdown = {"green": 0, "yellow": 0, "red": 0}
+        for _, record in records:
+            color_breakdown[record["color"]] += 1
+
+        return {
+            "overall_score": round(sum(r["score"] for _, r in records) / len(records), 2),
+            "color_breakdown": color_breakdown,
+            "high_confidence_fields": [path for path, record in records if record["color"] == "green"],
+            "needs_verification_fields": [
+                path for path, record in records if record["needs_verification"]
+            ],
+            "calibration": "rule_based_v1",
+        }
+
+    def _build_field_confidence(
+        self,
+        has_confirmed_symptoms: bool,
+        used_transcript_fallback: bool,
+        time_match_type: str,
+        has_location: bool,
+        has_context: bool,
+    ) -> Dict[str, Any]:
+        """Create calibrated confidence map for extracted documentation fields."""
+        chief_base = 0.76 if has_confirmed_symptoms else 0.58
+        chief_score = self._calibrate_confidence_score(
+            chief_base,
+            evidence_hits=2 if has_confirmed_symptoms else 1,
+            uncertainty_penalties=1 if used_transcript_fallback else 0,
+        )
+
+        symptoms_score = self._calibrate_confidence_score(
+            0.82 if has_confirmed_symptoms else 0.30,
+            evidence_hits=2 if has_confirmed_symptoms else 0,
+            uncertainty_penalties=0 if has_confirmed_symptoms else 1,
+        )
+
+        if time_match_type == "numeric":
+            time_base, time_hits = 0.78, 2
+        elif time_match_type == "relative":
+            time_base, time_hits = 0.66, 1
+        else:
+            time_base, time_hits = 0.28, 0
+
+        onset_score = self._calibrate_confidence_score(
+            time_base,
+            evidence_hits=time_hits,
+            uncertainty_penalties=0 if time_match_type != "none" else 1,
+        )
+        duration_score = self._calibrate_confidence_score(
+            time_base,
+            evidence_hits=time_hits,
+            uncertainty_penalties=0 if time_match_type != "none" else 1,
+        )
+
+        location_score = self._calibrate_confidence_score(
+            0.74 if has_location else 0.28,
+            evidence_hits=1 if has_location else 0,
+            uncertainty_penalties=0 if has_location else 1,
+        )
+
+        context_score = self._calibrate_confidence_score(
+            0.72 if has_context else 0.28,
+            evidence_hits=1 if has_context else 0,
+            uncertainty_penalties=0 if has_context else 1,
+        )
+
+        return {
+            "chief_complaint": self._build_confidence_record(
+                chief_score,
+                "Derived from transcript symptom mapping and fallback rules."
+            ),
+            "symptom_details": {
+                "symptoms_mentioned": self._build_confidence_record(
+                    symptoms_score,
+                    "Matched against transcript using rule-based symptom lexicon."
+                ),
+                "onset": self._build_confidence_record(
+                    onset_score,
+                    "Extracted from time expressions in transcript."
+                ),
+                "duration": self._build_confidence_record(
+                    duration_score,
+                    "Extracted from numeric/relative duration patterns."
+                ),
+                "location": self._build_confidence_record(
+                    location_score,
+                    "Extracted from anatomical location regex patterns."
+                ),
+                "quality": self._build_confidence_record(
+                    self._calibrate_confidence_score(0.22, uncertainty_penalties=1),
+                    "Quality descriptor is often unspecified in source transcript."
+                ),
+                "severity_description": self._build_confidence_record(
+                    self._calibrate_confidence_score(0.22, uncertainty_penalties=1),
+                    "Severity descriptor is often unspecified in source transcript."
+                ),
+                "associated_symptoms": self._build_confidence_record(
+                    self._calibrate_confidence_score(0.24, uncertainty_penalties=1),
+                    "Associated symptom links require clinician confirmation."
+                ),
+                "aggravating_factors": self._build_confidence_record(
+                    context_score,
+                    "Derived from activity/context phrases in transcript."
+                ),
+                "alleviating_factors": self._build_confidence_record(
+                    self._calibrate_confidence_score(0.22, uncertainty_penalties=1),
+                    "Alleviating factors are often not explicitly stated."
+                ),
+            },
+            "soap_note_subjective": self._build_confidence_record(
+                self._calibrate_confidence_score(
+                    0.75 if has_confirmed_symptoms else 0.60,
+                    evidence_hits=1 if has_confirmed_symptoms else 0,
+                    uncertainty_penalties=0 if has_confirmed_symptoms else 1,
+                ),
+                "Generated from validated extracted symptom fields."
+            ),
+        }
     
     def _extract_fields_from_text(self, text: str, transcript: str) -> Dict[str, Any]:
         """
@@ -177,7 +371,6 @@ class MedGemmaService:
         
         # Clean inputs
         transcript_clean = transcript.lower().strip()
-        ai_output_clean = text.lower().strip()
         
         # Symptom mapping: canonical name -> variations to search for
         # CRITICAL: Ordered by specificity (longer/more specific terms first)
@@ -276,6 +469,7 @@ class MedGemmaService:
         # Extract timing information from TRANSCRIPT (not AI output)
         duration = "not specified"
         onset = "not specified"
+        time_match_type = "none"
         
         # Enhanced time patterns (now work with converted numbers)
         time_patterns = [
@@ -333,6 +527,7 @@ class MedGemmaService:
                     unit = unit[:-1]  # Remove trailing 's' for singular
                 duration = f"{num_val} {unit}"
                 onset = f"{duration} ago"
+                time_match_type = "numeric"
                 break
         
         # If no numeric match, try relative patterns
@@ -347,6 +542,7 @@ class MedGemmaService:
                     else:
                         onset = onset_value
                     duration = captured_value
+                    time_match_type = "relative"
                     break
         
         # Build SOAP note from VALIDATED information only - more narrative style
@@ -397,21 +593,34 @@ class MedGemmaService:
         
         soap_note = ", ".join(soap_parts) + "."
         soap_note = soap_note[0].upper() + soap_note[1:]  # Capitalize first letter
+
+        symptom_details = {
+            "symptoms_mentioned": confirmed_symptoms if confirmed_symptoms else ["not specified"],
+            "onset": onset,
+            "duration": duration,
+            "location": location,
+            "quality": "not specified",
+            "severity_description": "not specified",
+            "associated_symptoms": [],  # Only add truly associated symptoms, not main complaint
+            "aggravating_factors": context if context != "not specified" else "not specified",
+            "alleviating_factors": "not specified"
+        }
+
+        field_confidence = self._build_field_confidence(
+            has_confirmed_symptoms=bool(confirmed_symptoms),
+            used_transcript_fallback=not bool(confirmed_symptoms),
+            time_match_type=time_match_type,
+            has_location=location != "not specified",
+            has_context=context != "not specified",
+        )
+        confidence_summary = self._build_confidence_summary(field_confidence)
         
         return {
             "chief_complaint": chief_complaint,
-            "symptom_details": {
-                "symptoms_mentioned": confirmed_symptoms if confirmed_symptoms else ["not specified"],
-                "onset": onset,
-                "duration": duration,
-                "location": location,
-                "quality": "not specified",
-                "severity_description": "not specified",
-                "associated_symptoms": [],  # Only add truly associated symptoms, not main complaint
-                "aggravating_factors": context if context != "not specified" else "not specified",
-                "alleviating_factors": "not specified"
-            },
+            "symptom_details": symptom_details,
             "soap_note_subjective": soap_note,
+            "field_confidence": field_confidence,
+            "confidence_summary": confidence_summary,
             "parsing_method": "transcript_validated",
             "ai_output_used": False  # We are NOT using AI output for symptom extraction
         }
@@ -482,7 +691,7 @@ class MedGemmaService:
                 add_generation_prompt=True
             )
             
-            logger.info(f"Formatted prompt (first 200 chars): {prompt[:200]}...")
+            self._safe_log_generated_text("MedGemma prompt", prompt)
             
             # Tokenize input
             inputs = self.tokenizer(
@@ -506,7 +715,7 @@ class MedGemmaService:
             generated_ids = outputs[0][inputs.input_ids.shape[1]:]
             decoded = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
             
-            logger.info(f"Raw model output (length={len(decoded)}): {decoded[:200]}...")
+            self._safe_log_generated_text("MedGemma response", decoded)
             
             # Extract documentation from conversational text
             documentation = self._extract_fields_from_text(decoded, transcript)
@@ -523,10 +732,29 @@ class MedGemmaService:
                     "soap_note_objective": "Pending clinician assessment.",
                     "soap_note_assessment": "Pending clinician assessment.",
                     "soap_note_plan": "Pending clinician assessment.",
+                    "field_confidence": {
+                        "chief_complaint": self._build_confidence_record(0.25, "Validation failed fallback."),
+                        "symptom_details": {
+                            "symptoms_mentioned": self._build_confidence_record(0.25, "Validation failed fallback."),
+                        },
+                        "soap_note_subjective": self._build_confidence_record(0.30, "Validation failed fallback."),
+                    },
+                    "confidence_summary": {
+                        "overall_score": 0.27,
+                        "color_breakdown": {"green": 0, "yellow": 0, "red": 3},
+                        "high_confidence_fields": [],
+                        "needs_verification_fields": [
+                            "chief_complaint",
+                            "symptom_details.symptoms_mentioned",
+                            "soap_note_subjective",
+                        ],
+                        "calibration": "rule_based_v1",
+                    },
                     "validation_failed": True,
                     "validation_error": error_msg,
                     "requires_clinician_review": True,
-                    "compliance_notice": "Validation failed. Raw transcript provided for manual review."
+                    "compliance_notice": build_compliance_notice(),
+                    "compliance_metadata": build_compliance_metadata(),
                 }
                 return fallback
             
@@ -542,10 +770,8 @@ class MedGemmaService:
             
             # Ensure compliance fields are present
             documentation["requires_clinician_review"] = True
-            documentation["compliance_notice"] = (
-                "This is administrative documentation only. "
-                "All clinical decisions must be made by qualified healthcare professionals."
-            )
+            documentation["compliance_notice"] = build_compliance_notice()
+            documentation["compliance_metadata"] = build_compliance_metadata()
             
             # Remove any urgency/severity fields if present (compliance)
             documentation.pop("urgency", None)
@@ -601,7 +827,7 @@ class MedGemmaService:
         generated_ids = outputs[0][inputs.input_ids.shape[1]:]
         decoded = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
         
-        logger.info(f"SOAP O/A/P raw output (length={len(decoded)}): {decoded[:200]}...")
+        self._safe_log_generated_text("MedGemma OAP response", decoded)
         
         # Parse the three sections from model output
         result = self._parse_soap_sections(decoded)
@@ -659,7 +885,7 @@ class MedGemmaService:
             
             if extracted:
                 result[key] = extracted
-                logger.info(f"Extracted {key}: {extracted[:80]}...")
+                self._safe_log_generated_text(f"Parsed {key}", extracted, max_chars=80)
             else:
                 result[key] = defaults[key]
                 logger.warning(f"Could not extract {key}, using default")
@@ -737,7 +963,7 @@ class MedGemmaService:
             generated_ids = outputs[0][input_len:]
             description = self.vision_processor.decode(generated_ids, skip_special_tokens=True)
             
-            logger.info(f"Image analysis result (length={len(description)}): {description[:200]}...")
+            self._safe_log_generated_text("MedGemma image analysis", description)
             
             # Parse structured sections from the description
             import re
@@ -764,10 +990,8 @@ class MedGemmaService:
                 "notable_features": notable_features,
                 "visual_findings_text": description,
                 "requires_clinician_review": True,
-                "compliance_notice": (
-                    "Image analysis is DESCRIPTIVE ONLY. "
-                    "All visual findings require clinician verification."
-                )
+                "compliance_notice": build_compliance_notice(),
+                "compliance_metadata": build_compliance_metadata(),
             }
             
         except Exception as e:

@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     # MedGemma Generation Parameters
     medgemma_max_tokens: int = 1024  # Sufficient for complete documentation
     medgemma_repetition_penalty: float = 1.1  # Prevent repetitive output
+
+    # Compliance Controls
+    allow_phi_logging: bool = False
+    enable_phi_persistence: bool = False
+    medgemma_terms_acknowledged: bool = False
+    enforce_medgemma_terms_acknowledgement: bool = True
     
     # Audio
     max_audio_duration_seconds: int = 300
