@@ -1,25 +1,83 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Text, DateTime
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text
 from app.db.database import Base
+
 
 class IntakeSession(Base):
     __tablename__ = "intake_sessions"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
-    
+
     patient_name = Column(String, nullable=True) # Optional for now
-    
+
     # Original Data
     transcript = Column(Text, nullable=False)
     detected_language = Column(String, default="en")
-    
+
     # Extracted Data
     chief_complaint = Column(Text, nullable=True)
-    
+
     # SOAP Sections
     soap_subjective = Column(Text, nullable=True)
     soap_objective = Column(Text, nullable=True)
     soap_assessment = Column(Text, nullable=True)
     soap_plan = Column(Text, nullable=True)
+
+    # Encryption tracking
+    is_encrypted = Column(Boolean, default=False, nullable=False)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    username = Column(String, unique=True, index=True, nullable=False)
+    full_name = Column(String, nullable=True)
+    role = Column(String, index=True, nullable=False)
+    hashed_password = Column(Text, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    user_id = Column(String, nullable=True, index=True)
+    username = Column(String, nullable=True, index=True)
+    role = Column(String, nullable=True, index=True)
+    action = Column(String, nullable=False)
+    resource = Column(String, nullable=False)
+    resource_id = Column(String, nullable=True)
+    endpoint = Column(String, nullable=False, index=True)
+    http_method = Column(String, nullable=False)
+    status_code = Column(Integer, nullable=False)
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(Text, nullable=True)
+    details = Column(Text, nullable=True)
+    # Enhanced HIPAA fields
+    data_access_type = Column(String, nullable=True, index=True)  # read, write, export, delete, purge
+    phi_accessed = Column(Boolean, default=False, nullable=False)
+    correlation_id = Column(String, nullable=True, index=True)
+
+
+class DataExportLog(Base):
+    """Tracks all data exports for HIPAA compliance — who exported what, when, and where."""
+    __tablename__ = "data_export_logs"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    user_id = Column(String, nullable=True, index=True)
+    username = Column(String, nullable=True, index=True)
+    export_type = Column(String, nullable=False)  # fhir, csv, json, pdf
+    resource_type = Column(String, nullable=False)  # session, audit_log, report
+    resource_ids = Column(Text, nullable=True)  # JSON list of exported resource IDs
+    record_count = Column(Integer, default=0)
+    destination = Column(String, nullable=True)  # e.g., "ehr_endpoint", "download", "api"
+    ip_address = Column(String, nullable=True)
+    status = Column(String, default="success")  # success, failed, partial
+    details = Column(Text, nullable=True)

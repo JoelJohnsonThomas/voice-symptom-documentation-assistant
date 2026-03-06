@@ -59,6 +59,8 @@ The application combines:
 | Clinical NER | Conditions and medications extraction | `app/models/ner_service.py` |
 | Session History | Save/list/get/delete intake sessions | `/api/sessions*` |
 | FHIR Integration | Build bundle and push to EHR endpoint | `/api/fhir/export`, `/api/fhir/push` |
+| Security | JWT auth + RBAC (`Admin`, `Clinician`, `Intake Staff`) | `/api/auth/*` + route role guards |
+| HIPAA Auditing | Access audit trail (who, what, when, status) | `audit_logs` table, `GET /api/audit-logs` |
 | Frontend UX | PWA, themes, offline/install indicators | `app/static/*` |
 
 ## Architecture Flow
@@ -211,6 +213,14 @@ Primary settings class: [`app/config.py`](app/config.py)
 | `ENFORCE_MEDGEMMA_TERMS_ACKNOWLEDGEMENT` | Block MedGemma inference until acknowledged |
 | `ALLOW_PHI_LOGGING` | Allow PHI-bearing logs (default `false`) |
 | `ENABLE_PHI_PERSISTENCE` | Persist PHI-bearing session text (default `false`) |
+| `AUTH_ENABLED` | Enable authentication and route protection |
+| `JWT_SECRET_KEY` | JWT signing key for bearer tokens |
+| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | Token lifetime in minutes |
+| `PASSWORD_HASH_ITERATIONS` | PBKDF2 password hashing iterations |
+| `BOOTSTRAP_ADMIN_USERNAME` | Initial admin username (created on startup if missing) |
+| `BOOTSTRAP_ADMIN_PASSWORD` | Initial admin password (change immediately) |
+| `BOOTSTRAP_ADMIN_FULL_NAME` | Initial admin display name |
+| `AUDIT_LOGGING_ENABLED` | Enable API access audit logging |
 
 ## API Surface
 
@@ -218,6 +228,11 @@ Implementation source: [`app/main.py`](app/main.py)
 
 | Method | Route | Purpose |
 |---|---|---|
+| `POST` | `/api/auth/token` | Login and get JWT bearer token |
+| `GET` | `/api/auth/me` | Current authenticated user |
+| `GET` | `/api/auth/users` | List users (Admin only) |
+| `POST` | `/api/auth/users` | Create user with role (Admin only) |
+| `GET` | `/api/audit-logs` | Compliance audit records (Admin only) |
 | `GET` | `/api/health` | Service/model readiness |
 | `POST` | `/api/transcribe` | Audio file transcription |
 | `POST` | `/api/document` | Structured documentation from transcript |
@@ -282,6 +297,8 @@ scripts/
 - Clinician review required for all generated content
 - Compliance notices included in API responses
 - HIPAA minimum-necessary defaults: PHI logging and PHI persistence disabled
+- JWT authentication and RBAC (`Admin`, `Clinician`, `Intake Staff`)
+- API access auditing for HIPAA traceability (user, resource, timestamp, status)
 - MedGemma terms acknowledgement gating before inference (enforced by default)
 - Field-level extraction confidence scores with green/yellow/red verification cues
 

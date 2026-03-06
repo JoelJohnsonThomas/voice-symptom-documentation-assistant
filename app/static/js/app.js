@@ -17,6 +17,9 @@ const elements = {
     sidebarOverlay: document.getElementById('sidebarOverlay'),
     openSidebarBtn: document.getElementById('openSidebar'),
     closeSidebarBtn: document.getElementById('closeSidebar'),
+    userAvatar: document.getElementById('userAvatar'),
+    userName: document.getElementById('userName'),
+    userRole: document.getElementById('userRole'),
 
     // Voice Recording
     recordBtn: document.getElementById('recordBtn'),
@@ -106,7 +109,15 @@ const elements = {
     ehrModalCancel: document.getElementById('ehrModalCancel'),
     ehrModalSubmit: document.getElementById('ehrModalSubmit'),
     ehrServerUrl: document.getElementById('ehrServerUrl'),
-    ehrAuthToken: document.getElementById('ehrAuthToken')
+    ehrAuthToken: document.getElementById('ehrAuthToken'),
+
+    // Auth
+    authLoginForm: document.getElementById('authLoginForm'),
+    authUsername: document.getElementById('authUsername'),
+    authPassword: document.getElementById('authPassword'),
+    authLoginBtn: document.getElementById('authLoginBtn'),
+    authLogoutBtn: document.getElementById('authLogoutBtn'),
+    authStatusText: document.getElementById('authStatusText')
 };
 
 // =====================================================
@@ -146,10 +157,375 @@ const state = {
     // Session History
     sessionHistory: [],
 
+    // Auth
+    authToken: localStorage.getItem('voxdoc_access_token'),
+    currentUser: null,
+
     // PWA State
     deferredInstallPrompt: null,
     isOffline: !navigator.onLine
 };
+
+const ROLE_LABELS = {
+    admin: 'Admin',
+    clinician: 'Clinician',
+    intake_staff: 'Intake Staff'
+};
+
+function getRoleLabel(role) {
+    return ROLE_LABELS[role] || role || 'Unknown';
+}
+
+function getInitials(name) {
+    if (!name) return '--';
+    const parts = String(name).trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return '--';
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
+
+function setStoredToken(token) {
+    state.authToken = token || null;
+    if (token) {
+        localStorage.setItem('voxdoc_access_token', token);
+    } else {
+        localStorage.removeItem('voxdoc_access_token');
+    }
+}
+
+function updateAuthUI(message = null) {
+    const isAuthenticated = Boolean(state.currentUser && state.authToken);
+
+    if (elements.userAvatar) {
+        elements.userAvatar.textContent = isAuthenticated
+            ? getInitials(state.currentUser.full_name || state.currentUser.username)
+            : '--';
+    }
+    if (elements.userName) {
+        elements.userName.textContent = isAuthenticated
+            ? (state.currentUser.full_name || state.currentUser.username)
+            : 'Not signed in';
+    }
+    if (elements.userRole) {
+        elements.userRole.textContent = isAuthenticated
+            ? getRoleLabel(state.currentUser.role)
+            : 'Authentication required';
+    }
+
+    if (elements.authStatusText) {
+        if (message) {
+            elements.authStatusText.textContent = message;
+        } else if (isAuthenticated) {
+            elements.authStatusText.textContent = `Signed in as ${state.currentUser.username} (${getRoleLabel(state.currentUser.role)}).`;
+        } else {
+            elements.authStatusText.textContent = 'Not signed in. Use your assigned credentials.';
+        }
+    }
+
+    if (elements.authUsername) elements.authUsername.disabled = isAuthenticated;
+    if (elements.authPassword) elements.authPassword.disabled = isAuthenticated;
+    if (elements.authLoginBtn) elements.authLoginBtn.disabled = isAuthenticated;
+    if (elements.authLogoutBtn) elements.authLogoutBtn.disabled = !isAuthenticated;
+
+    updateSubmitButton();
+}
+
+async function apiFetch(url, options = {}, authRequired = true) {
+    const headers = new Headers(options.headers || {});
+    if (state.authToken) {
+        headers.set('Authorization', `Bearer ${state.authToken}`);
+    }
+
+    const response = await fetch(url, {
+        ...options,
+        headers
+    });
+
+    if (response.status === 401 && authRequired) {
+        clearAuthSession('Session expired. Please sign in again.');
+    }
+
+    if (response.status === 429) {
+        const errorData = await response.json().catch(() => ({}));
+        const detail = errorData.detail || {};
+        const retryAfter = detail.retry_after_seconds || parseInt(response.headers.get('Retry-After') || '30', 10);
+        const queueLength = detail.queue_length;
+        const msg = detail.error || 'Rate limit exceeded. Please wait before retrying.';
+        showRateLimitToast(msg, retryAfter);
+        throw new Error(msg);
+    }
+
+    return response;
+}
+
+function showRateLimitToast(message, retryAfter) {
+    const existing = document.querySelector('.rate-limit-toast');
+    if (existing) existing.remove();
+
+    const toast = document.createElement('div');
+    toast.className = 'rate-limit-toast';
+    toast.textContent = `${message} (retry in ${retryAfter}s)`;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), Math.min(retryAfter * 1000, 10000));
+}
+
+let queuePollInterval = null;
+
+function showQueueStatus(position, waitSeconds) {
+    const banner = document.getElementById('queueBanner');
+    const posEl = document.getElementById('queuePosition');
+    const waitEl = document.getElementById('queueWait');
+    if (!banner) return;
+
+    banner.classList.remove('hidden');
+    posEl.textContent = `Position in queue: ${position}`;
+    waitEl.textContent = `Estimated wait: ${Math.ceil(waitSeconds)}s`;
+}
+
+function hideQueueStatus() {
+    const banner = document.getElementById('queueBanner');
+    if (banner) banner.classList.add('hidden');
+    if (queuePollInterval) {
+        clearInterval(queuePollInterval);
+        queuePollInterval = null;
+    }
+}
+
+function startQueuePolling() {
+    hideQueueStatus();
+    queuePollInterval = setInterval(async () => {
+        try {
+            const resp = await fetch('/api/queue/status', {
+                headers: { 'Authorization': `Bearer ${state.authToken}` }
+            });
+            if (!resp.ok) return;
+            const data = await resp.json();
+            if (data.queue_length > 0) {
+                showQueueStatus(data.queue_length, data.queue_length * data.avg_inference_seconds);
+            } else {
+                hideQueueStatus();
+                const msgEl = document.getElementById('loadingMessage');
+                if (msgEl) msgEl.textContent = 'Processing and generating documentation...';
+            }
+        } catch { /* ignore polling errors */ }
+    }, 3000);
+}
+
+// =====================================================
+// MONITORING DASHBOARD
+// =====================================================
+
+let monitoringAutoRefresh = null;
+
+async function loadMonitoringDashboard() {
+    try {
+        const resp = await apiFetch('/api/monitoring/dashboard');
+        if (!resp.ok) {
+            if (resp.status === 403) {
+                const mv = document.getElementById('monitoringView');
+                if (mv) mv.innerHTML = '<p style="padding:20px;color:var(--text-secondary);">Admin access required for monitoring dashboard.</p>';
+            }
+            return;
+        }
+        const data = await resp.json();
+        renderMonitoringData(data);
+
+        // Auto-refresh every 10s while on the monitoring tab
+        if (monitoringAutoRefresh) clearInterval(monitoringAutoRefresh);
+        monitoringAutoRefresh = setInterval(async () => {
+            const mv = document.getElementById('monitoringView');
+            if (mv && !mv.classList.contains('hidden')) {
+                try {
+                    const r = await apiFetch('/api/monitoring/dashboard');
+                    if (r.ok) renderMonitoringData(await r.json());
+                } catch { /* ignore */ }
+            } else {
+                clearInterval(monitoringAutoRefresh);
+                monitoringAutoRefresh = null;
+            }
+        }, 10000);
+    } catch (e) {
+        console.error('Failed to load monitoring data:', e);
+    }
+}
+
+function renderMonitoringData(data) {
+    // Uptime
+    const uptimeEl = document.getElementById('monitoringUptime');
+    if (uptimeEl) {
+        const h = Math.floor(data.uptime_seconds / 3600);
+        const m = Math.floor((data.uptime_seconds % 3600) / 60);
+        uptimeEl.textContent = `Uptime: ${h}h ${m}m`;
+    }
+
+    // Model cards
+    const modelMap = {
+        medasr: { req: 'medasrRequests', err: 'medasrErrorRate', lat: 'medasrLatency', p95: 'medasrP95', dot: 'statusDotMedasr', card: 'monitorCardMedasr' },
+        medgemma: { req: 'medgemmaRequests', err: 'medgemmaErrorRate', lat: 'medgemmaLatency', p95: 'medgemmaP95', dot: 'statusDotMedgemma', card: 'monitorCardMedgemma' },
+        medgemma_vision: { req: 'visionRequests', err: 'visionErrorRate', lat: 'visionLatency', p95: 'visionP95', dot: 'statusDotVision', card: 'monitorCardVision' },
+        ner: { req: 'nerRequests', err: 'nerErrorRate', lat: 'nerLatency', p95: 'nerP95', dot: 'statusDotNer', card: 'monitorCardNer' },
+    };
+
+    for (const [model, ids] of Object.entries(modelMap)) {
+        const stats = data.models?.[model];
+        if (!stats) continue;
+
+        const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+
+        setTxt(ids.req, stats.total_requests);
+        setTxt(ids.err, (stats.error_rate * 100).toFixed(1) + '%');
+        setTxt(ids.lat, stats.latency?.avg ? stats.latency.avg.toFixed(2) + 's' : '--');
+        setTxt(ids.p95, stats.latency?.p95 ? stats.latency.p95.toFixed(2) + 's' : '--');
+
+        const dot = document.getElementById(ids.dot);
+        if (dot) {
+            dot.className = 'monitor-status-dot ' + (stats.ready ? 'ready' : 'not-ready');
+        }
+
+        const card = document.getElementById(ids.card);
+        if (card) {
+            card.classList.remove('alert-warning', 'alert-critical');
+            if (stats.error_rate >= 0.25) card.classList.add('alert-critical');
+            else if (stats.error_rate >= 0.1) card.classList.add('alert-warning');
+        }
+    }
+
+    // Queue
+    if (data.queue) {
+        const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+        setTxt('queueActive', data.queue.active_inferences);
+        setTxt('queueWaiting', data.queue.queue_length);
+        setTxt('queueMaxConc', data.queue.max_concurrent);
+        setTxt('queueAvgTime', data.queue.avg_inference_seconds + 's');
+    }
+
+    // Connections
+    const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    setTxt('connHttp', data.active_http_connections || 0);
+    setTxt('connWs', data.active_websockets || 0);
+
+    // Alerts
+    const alertsBanner = document.getElementById('alertsBanner');
+    if (alertsBanner) {
+        if (data.alerts && data.alerts.length > 0) {
+            alertsBanner.classList.remove('hidden');
+            alertsBanner.innerHTML = data.alerts.map(a => `
+                <div class="alert-item ${a.severity}">
+                    <span class="alert-severity">${a.severity}</span>
+                    <span>${a.description}</span>
+                </div>
+            `).join('');
+        } else {
+            alertsBanner.classList.add('hidden');
+            alertsBanner.innerHTML = '';
+        }
+    }
+}
+
+function clearAuthSession(message = 'Signed out.') {
+    setStoredToken(null);
+    state.currentUser = null;
+    state.sessionHistory = [];
+    updateRecentDocsUI();
+    renderHistoryView();
+    updateAuthUI(message);
+}
+
+function requireAuthentication() {
+    if (state.currentUser && state.authToken) {
+        return true;
+    }
+    updateAuthUI('Please sign in to continue.');
+    elements.authUsername?.focus();
+    alert('Authentication required. Sign in from Settings.');
+    return false;
+}
+
+async function refreshCurrentUser() {
+    if (!state.authToken) {
+        state.currentUser = null;
+        updateAuthUI();
+        return false;
+    }
+
+    try {
+        const response = await apiFetch('/api/auth/me', { method: 'GET' }, false);
+        if (!response.ok) {
+            state.currentUser = null;
+            setStoredToken(null);
+            updateAuthUI('Sign in required.');
+            return false;
+        }
+        state.currentUser = await response.json();
+        updateAuthUI();
+        return true;
+    } catch (e) {
+        console.error('Failed to load current user', e);
+        state.currentUser = null;
+        setStoredToken(null);
+        updateAuthUI('Sign in required.');
+        return false;
+    }
+}
+
+function setupAuth() {
+    elements.authLoginForm?.addEventListener('submit', handleLoginSubmit);
+    elements.authLogoutBtn?.addEventListener('click', () => {
+        clearAuthSession('Signed out successfully.');
+    });
+    updateAuthUI();
+}
+
+async function handleLoginSubmit(event) {
+    event.preventDefault();
+
+    const username = elements.authUsername?.value?.trim();
+    const password = elements.authPassword?.value || '';
+    if (!username || !password) {
+        updateAuthUI('Username and password are required.');
+        return;
+    }
+
+    if (elements.authLoginBtn) {
+        elements.authLoginBtn.disabled = true;
+        elements.authLoginBtn.textContent = 'Signing in...';
+    }
+
+    try {
+        const formBody = new URLSearchParams();
+        formBody.set('username', username);
+        formBody.set('password', password);
+
+        const response = await fetch('/api/auth/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: formBody.toString()
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || 'Invalid credentials.');
+        }
+
+        const tokenData = await response.json();
+        setStoredToken(tokenData.access_token);
+        await refreshCurrentUser();
+
+        if (elements.authPassword) {
+            elements.authPassword.value = '';
+        }
+
+        await loadSessionHistory();
+    } catch (e) {
+        console.error('Login failed', e);
+        clearAuthSession(`Sign in failed: ${e.message}`);
+    } finally {
+        if (elements.authLoginBtn) {
+            elements.authLoginBtn.textContent = 'Sign In';
+        }
+        updateAuthUI();
+    }
+}
 
 // =====================================================
 // WEBSOCKET STREAMING
@@ -161,7 +537,8 @@ const state = {
  */
 function getWebSocketUrl() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${protocol}//${window.location.host}/ws/transcribe`;
+    const tokenQuery = state.authToken ? `?token=${encodeURIComponent(state.authToken)}` : '';
+    return `${protocol}//${window.location.host}/ws/transcribe${tokenQuery}`;
 }
 
 /**
@@ -532,8 +909,9 @@ function setupNeuralGraph() {
 // =====================================================
 // INITIALIZATION
 // =====================================================
-function init() {
+async function init() {
     setupNavigation();
+    setupAuth();
     setupRecording();
     setupTextInput();
     setupImageUpload();
@@ -541,7 +919,10 @@ function init() {
     setupActions();
     setupSOAPActions();
     setupSettings();
-    loadSessionHistory();
+    await refreshCurrentUser();
+    if (state.currentUser) {
+        await loadSessionHistory();
+    }
     setupPDFExport();
     setupPWA();
 }
@@ -649,6 +1030,9 @@ async function saveToOfflineQueue(type, data) {
 
 async function syncOfflineQueue() {
     try {
+        if (!state.currentUser || !state.authToken) {
+            return;
+        }
         const db = await dbPromise;
         const tx = db.transaction('offlineQueue', 'readonly');
         const store = tx.objectStore('offlineQueue');
@@ -667,7 +1051,7 @@ async function syncOfflineQueue() {
                         const formData = new FormData();
                         formData.append('audio', item.data.blob, "offline_recording.webm");
                         // Assuming a submitAudio function exists or re-implementing the logic here
-                        const response = await fetch('/api/voice-intake', {
+                        const response = await apiFetch('/api/voice-intake', {
                             method: 'POST',
                             body: formData
                         });
@@ -676,7 +1060,7 @@ async function syncOfflineQueue() {
                     } else if (item.type === 'text') {
                         // Re-submit text
                         // Assuming a submitText function exists or re-implementing the logic here
-                        const response = await fetch('/api/document', {
+                        const response = await apiFetch('/api/document', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ transcript: item.data.text })
@@ -714,18 +1098,27 @@ function setupNavigation() {
     const dashboardBtn = document.querySelector('[data-tab="dashboard"]');
     const settingsBtn = document.querySelector('[data-tab="settings"]');
     const historyBtn = document.querySelector('[data-tab="history"]');
+    const monitoringBtn = document.querySelector('[data-tab="monitoring"]');
+    const hipaaBtn = document.querySelector('[data-tab="hipaa"]');
 
     // Views
     const dashboardView = document.getElementById('dashboardView');
     const settingsView = document.getElementById('settingsView');
     const historyView = document.getElementById('historyView');
+    const monitoringView = document.getElementById('monitoringView');
+    const hipaaView = document.getElementById('hipaaView');
+
+    const allViews = [dashboardView, settingsView, historyView, monitoringView, hipaaView];
+    const allBtns = [dashboardBtn, settingsBtn, historyBtn, monitoringBtn, hipaaBtn];
 
     function setActiveTab(activeBtn) {
-        [dashboardBtn, settingsBtn, historyBtn].forEach(btn => {
-            if (btn) btn.classList.remove('active');
-        });
+        allBtns.forEach(btn => { if (btn) btn.classList.remove('active'); });
         if (activeBtn) activeBtn.classList.add('active');
-        closeSidebar(); // Auto close on mobile
+        closeSidebar();
+    }
+
+    function hideAllViews() {
+        allViews.forEach(v => { if (v) v.classList.add('hidden'); });
     }
 
     function handleNavKeydown(e, actionObj) {
@@ -738,9 +1131,8 @@ function setupNavigation() {
     if (dashboardBtn) {
         dashboardBtn.addEventListener('click', () => {
             setActiveTab(dashboardBtn);
+            hideAllViews();
             if (dashboardView) dashboardView.classList.remove('hidden');
-            if (historyView) historyView.classList.add('hidden');
-            if (settingsView) settingsView.classList.add('hidden');
         });
         dashboardBtn.addEventListener('keydown', (e) => handleNavKeydown(e, dashboardBtn));
     }
@@ -748,9 +1140,8 @@ function setupNavigation() {
     if (historyBtn) {
         historyBtn.addEventListener('click', () => {
             setActiveTab(historyBtn);
-            if (dashboardView) dashboardView.classList.add('hidden');
+            hideAllViews();
             if (historyView) historyView.classList.remove('hidden');
-            if (settingsView) settingsView.classList.add('hidden');
             renderHistoryView();
         });
         historyBtn.addEventListener('keydown', (e) => handleNavKeydown(e, historyBtn));
@@ -759,13 +1150,48 @@ function setupNavigation() {
     if (settingsBtn) {
         settingsBtn.addEventListener('click', () => {
             setActiveTab(settingsBtn);
-            if (dashboardView) dashboardView.classList.add('hidden');
-            if (historyView) historyView.classList.add('hidden');
+            hideAllViews();
             if (settingsView) settingsView.classList.remove('hidden');
-            // Re-draw graph if needed
             setupNeuralGraph();
         });
         settingsBtn.addEventListener('keydown', (e) => handleNavKeydown(e, settingsBtn));
+    }
+
+    if (monitoringBtn) {
+        monitoringBtn.addEventListener('click', () => {
+            setActiveTab(monitoringBtn);
+            hideAllViews();
+            if (monitoringView) monitoringView.classList.remove('hidden');
+            loadMonitoringDashboard();
+        });
+        monitoringBtn.addEventListener('keydown', (e) => handleNavKeydown(e, monitoringBtn));
+    }
+
+    if (hipaaBtn) {
+        hipaaBtn.addEventListener('click', () => {
+            setActiveTab(hipaaBtn);
+            hideAllViews();
+            if (hipaaView) hipaaView.classList.remove('hidden');
+            loadHipaaDashboard();
+        });
+        hipaaBtn.addEventListener('keydown', (e) => handleNavKeydown(e, hipaaBtn));
+    }
+
+    // Refresh button in monitoring view
+    const refreshBtn = document.getElementById('refreshMonitoring');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', loadMonitoringDashboard);
+    }
+
+    // HIPAA refresh and purge buttons
+    const refreshHipaaBtn = document.getElementById('refreshHipaa');
+    if (refreshHipaaBtn) {
+        refreshHipaaBtn.addEventListener('click', loadHipaaDashboard);
+    }
+
+    const purgeBtn = document.getElementById('hipaaPurgeBtn');
+    if (purgeBtn) {
+        purgeBtn.addEventListener('click', runHipaaPurge);
     }
 }
 
@@ -837,7 +1263,8 @@ function renderHistoryView() {
 
 async function loadSessionIntoDashboard(sessionId) {
     try {
-        const response = await fetch(\`/api/sessions/\${sessionId}\`);
+        if (!requireAuthentication()) return;
+        const response = await apiFetch(`/api/sessions/${sessionId}`, { method: 'GET' });
         if (!response.ok) throw new Error('Failed to fetch session');
         
         const session = await response.json();
@@ -926,6 +1353,7 @@ async function toggleRecording() {
 
 async function startRecording() {
     try {
+        if (!requireAuthentication()) return;
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
         // Try to connect WebSocket first
@@ -1170,9 +1598,10 @@ function updateSubmitButton() {
     const textContent = elements.textInput?.value.trim();
     const hasLiveTranscript = state.liveTranscript && state.liveTranscript.trim().length > 0;
     const hasImage = state.uploadedImageFile !== null;
+    const isAuthenticated = Boolean(state.currentUser && state.authToken);
 
     if (elements.submitBtn) {
-        elements.submitBtn.disabled = !(hasAudio || textContent || hasLiveTranscript || hasImage);
+        elements.submitBtn.disabled = !isAuthenticated || !(hasAudio || textContent || hasLiveTranscript || hasImage);
     }
 }
 
@@ -1190,6 +1619,7 @@ async function processInput() {
     const hasImage = state.uploadedImageFile !== null;
 
     if (!hasAudio && !textContent && !hasLiveTranscript && !hasImage) return;
+    if (!requireAuthentication()) return;
 
     // Hide live transcript and show loading
     hideLiveTranscript();
@@ -1211,7 +1641,7 @@ async function processInput() {
             const imageFormData = new FormData();
             imageFormData.append('image', state.uploadedImageFile);
 
-            const imgResponse = await fetch('/api/analyze-image', {
+            const imgResponse = await apiFetch('/api/analyze-image', {
                 method: 'POST',
                 body: imageFormData
             });
@@ -1241,7 +1671,7 @@ async function processInput() {
             formData.append('audio', state.audioBlob, 'recording.webm');
 
             try {
-                response = await fetch('/api/voice-intake', {
+                response = await apiFetch('/api/voice-intake', {
                     method: 'POST',
                     body: formData
                 });
@@ -1290,7 +1720,7 @@ async function processInput() {
         // 3. Generate documentation
         if (Object.keys(documentPayload).length > 0) {
             try {
-                response = await fetch('/api/document', {
+                response = await apiFetch('/api/document', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1358,6 +1788,9 @@ function showLoading() {
     elements.liveTranscriptState?.classList.add('hidden');
     elements.loadingState?.classList.remove('hidden');
     elements.transcriptTitle.textContent = 'Processing...';
+    const msgEl = document.getElementById('loadingMessage');
+    if (msgEl) msgEl.textContent = 'Processing and generating documentation...';
+    startQueuePolling();
 }
 
 function showResults() {
@@ -1366,12 +1799,14 @@ function showResults() {
     elements.liveTranscriptState?.classList.add('hidden');
     elements.resultsContainer?.classList.remove('hidden');
     elements.transcriptTitle.textContent = 'Documentation Results';
+    hideQueueStatus();
 }
 
 function showError(message) {
     elements.loadingState?.classList.add('hidden');
     elements.liveTranscriptState?.classList.add('hidden');
     elements.transcriptTitle.textContent = 'Error';
+    hideQueueStatus();
 
     // Create error display
     const errorHtml = `
@@ -1802,11 +2237,12 @@ function exportJSON() {
 
 async function downloadFHIRBundle() {
     if (!state.currentDocumentation) return;
+    if (!requireAuthentication()) return;
 
     try {
         elements.fhirExportBtn.classList.add('loading');
 
-        const response = await fetch('/api/fhir/export', {
+        const response = await apiFetch('/api/fhir/export', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1839,6 +2275,7 @@ async function downloadFHIRBundle() {
 
 async function pushToEHR() {
     if (!state.currentDocumentation) return;
+    if (!requireAuthentication()) return;
 
     const ehrUrl = elements.ehrServerUrl?.value;
     if (!ehrUrl) {
@@ -1850,7 +2287,7 @@ async function pushToEHR() {
         elements.ehrModalSubmit.disabled = true;
         elements.ehrModalSubmit.innerHTML = '<div class="spinner"></div> Pushing...';
 
-        const response = await fetch('/api/fhir/push', {
+        const response = await apiFetch('/api/fhir/push', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2349,7 +2786,14 @@ function getSOAPHistoryEl(section) {
 
 async function loadSessionHistory() {
     try {
-        const response = await fetch('/api/sessions');
+        if (!state.currentUser || !state.authToken) {
+            state.sessionHistory = [];
+            updateRecentDocsUI();
+            renderHistoryView();
+            return;
+        }
+
+        const response = await apiFetch('/api/sessions', { method: 'GET' });
         if (response.ok) {
             const data = await response.json();
             // Map the DB fields to what the UI expects
@@ -2369,6 +2813,10 @@ async function loadSessionHistory() {
             if (typeof renderHistoryView === 'function') {
                 renderHistoryView();
             }
+        } else {
+            state.sessionHistory = [];
+            updateRecentDocsUI();
+            renderHistoryView();
         }
     } catch (e) {
         console.error('Failed to load session history', e);
@@ -2377,6 +2825,7 @@ async function loadSessionHistory() {
 
 async function saveSessionToHistory() {
     if (!state.currentDocumentation) return;
+    if (!state.currentUser || !state.authToken) return;
 
     const doc = state.currentDocumentation.documentation;
     const sessionData = {
@@ -2391,7 +2840,7 @@ async function saveSessionToHistory() {
     };
 
     try {
-        const response = await fetch('/api/sessions', {
+        const response = await apiFetch('/api/sessions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(sessionData)
@@ -2549,7 +2998,150 @@ function batchExportPDF() {
 }
 
 // =====================================================
+// HIPAA COMPLIANCE DASHBOARD
+// =====================================================
+
+let hipaaAutoRefresh = null;
+
+async function loadHipaaDashboard() {
+    try {
+        const [summaryResp, exportResp] = await Promise.all([
+            apiFetch('/api/hipaa/audit-summary'),
+            apiFetch('/api/hipaa/export-logs?limit=20'),
+        ]);
+
+        if (summaryResp.ok) {
+            const data = await summaryResp.json();
+            renderHipaaSummary(data);
+        } else if (summaryResp.status === 403) {
+            const hv = document.getElementById('hipaaView');
+            if (hv) hv.innerHTML = '<p style="padding:20px;color:var(--text-secondary);">Admin access required for HIPAA dashboard.</p>';
+            return;
+        }
+
+        if (exportResp.ok) {
+            const logs = await exportResp.json();
+            renderExportLogs(logs);
+        }
+
+        // Auto-refresh every 15s while on hipaa tab
+        if (hipaaAutoRefresh) clearInterval(hipaaAutoRefresh);
+        hipaaAutoRefresh = setInterval(async () => {
+            const hv = document.getElementById('hipaaView');
+            if (hv && !hv.classList.contains('hidden')) {
+                try {
+                    const r = await apiFetch('/api/hipaa/audit-summary');
+                    if (r.ok) renderHipaaSummary(await r.json());
+                } catch { /* ignore */ }
+            } else {
+                clearInterval(hipaaAutoRefresh);
+                hipaaAutoRefresh = null;
+            }
+        }, 15000);
+    } catch (e) {
+        console.error('Failed to load HIPAA dashboard:', e);
+    }
+}
+
+function renderHipaaSummary(data) {
+    const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+
+    // Audit trail
+    setTxt('hipaaTotalAudit', data.total_audit_logs || 0);
+    setTxt('hipaaPhiAccess', data.phi_access_count || 0);
+    setTxt('hipaaPhiRecent', data.recent_phi_accesses_24h || 0);
+    setTxt('hipaaExports', data.total_exports || 0);
+
+    // Encryption status
+    const encStatus = document.getElementById('hipaaEncryptionStatus');
+    if (encStatus) {
+        encStatus.className = 'monitor-status-dot ' + (data.encryption_at_rest ? 'ready' : 'not-ready');
+    }
+    setTxt('hipaaEncryptionAtRest', data.encryption_at_rest ? 'Enabled' : 'Disabled');
+
+    const meta = data.compliance_metadata || {};
+    const hipaa = meta.hipaa || {};
+    setTxt('hipaaPhiPersistence', hipaa.phi_persistence_enabled ? 'Enabled' : 'Disabled');
+    setTxt('hipaaPhiLogging', hipaa.phi_logging_enabled ? 'Enabled' : 'Disabled');
+    setTxt('hipaaMinNecessary', hipaa.minimum_necessary_mode ? 'Active' : 'Inactive');
+
+    // Retention stats
+    const ret = data.retention || {};
+    const sessions = ret.sessions || {};
+    const audits = ret.audit_logs || {};
+    setTxt('hipaaSessionsTotal', sessions.total || 0);
+    setTxt('hipaaSessionsExpired', sessions.expired || 0);
+    setTxt('hipaaSessionRetention', sessions.retention_days > 0 ? sessions.retention_days : 'Forever');
+    setTxt('hipaaAutoPurge', ret.auto_purge_enabled ? 'Enabled' : 'Disabled');
+    setTxt('hipaaAuditTotal', audits.total || 0);
+    setTxt('hipaaAuditExpired', audits.expired || 0);
+    setTxt('hipaaAuditRetention', audits.retention_days > 0 ? audits.retention_days : 'Forever');
+    setTxt('hipaaPurgeInterval', ret.purge_interval_hours ? ret.purge_interval_hours + 'h' : '--');
+}
+
+function renderExportLogs(logs) {
+    const container = document.getElementById('hipaaExportLogs');
+    if (!container) return;
+
+    if (!logs || logs.length === 0) {
+        container.innerHTML = '<p class="text-muted">No export logs found.</p>';
+        return;
+    }
+
+    let html = `<div class="hipaa-export-row header">
+        <span>User</span><span>Type</span><span>Destination</span><span>Timestamp</span><span>Status</span>
+    </div>`;
+
+    for (const log of logs) {
+        const ts = log.timestamp ? new Date(log.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '--';
+        const dest = log.destination ? (log.destination.length > 15 ? log.destination.substring(0, 15) + '...' : log.destination) : '--';
+        html += `<div class="hipaa-export-row">
+            <span>${log.username || 'system'}</span>
+            <span>${log.export_type || '--'}</span>
+            <span title="${log.destination || ''}">${dest}</span>
+            <span>${ts}</span>
+            <span class="hipaa-export-status ${log.status || 'success'}">${log.status || 'success'}</span>
+        </div>`;
+    }
+
+    container.innerHTML = html;
+}
+
+async function runHipaaPurge() {
+    const resultEl = document.getElementById('hipaaPurgeResult');
+    const btn = document.getElementById('hipaaPurgeBtn');
+
+    if (!confirm('Run data purge based on retention policies? This will permanently delete expired records.')) {
+        return;
+    }
+
+    if (btn) btn.disabled = true;
+    if (resultEl) resultEl.textContent = 'Running purge...';
+
+    try {
+        const resp = await apiFetch('/api/hipaa/retention/purge', { method: 'POST' });
+        if (resp.ok) {
+            const data = await resp.json();
+            const msg = `Purged ${data.sessions_purged} sessions, ${data.audit_logs_purged} audit logs.`;
+            if (resultEl) resultEl.textContent = msg;
+            // Refresh dashboard after purge
+            loadHipaaDashboard();
+        } else {
+            if (resultEl) resultEl.textContent = 'Purge failed: ' + resp.status;
+        }
+    } catch (e) {
+        if (resultEl) resultEl.textContent = 'Purge error: ' + e.message;
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+// =====================================================
 // INITIALIZE
 
 // =====================================================
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', () => {
+    init().catch((error) => {
+        console.error('Initialization failed', error);
+    });
+});

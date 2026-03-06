@@ -36,3 +36,6 @@ scispacy>=0.5.3
 
 # EHR/FHIR Integration
 httpx>=0.27.0
+
+# HIPAA Encryption at Rest
+cryptography>=42.0.0
