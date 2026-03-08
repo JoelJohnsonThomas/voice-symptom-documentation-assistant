@@ -344,93 +344,116 @@ async def _write_audit_log(
             logger.warning(f"Failed to write audit log: {exc}")
 
 
-@app.middleware("http")
-async def metrics_and_correlation_middleware(request: Request, call_next):
-    """Assign correlation ID, track request metrics."""
-    # Correlation ID: from header or generate new
-    cid = request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
-    set_correlation_id(cid)
+class MetricsAndCorrelationMiddleware:
+    """Pure ASGI middleware for correlation IDs and request metrics."""
 
-    # Skip metrics for static assets
-    if request.url.path.startswith("/static"):
-        return await call_next(request)
+    def __init__(self, app):
+        self.app = app
 
-    ACTIVE_CONNECTIONS.inc(type="http")
-    start = time.monotonic()
-    exc_to_raise = None
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
-    try:
-        response = await call_next(request)
-    except Exception as exc:
-        exc_to_raise = exc
-        response = None
+        request = Request(scope)
+        cid = request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
+        set_correlation_id(cid)
 
-    # Post-processing: always runs, never inside try/finally
-    duration = time.monotonic() - start
-    status_code = response.status_code if response else 500
-    endpoint = request.url.path
-    method = request.method
+        # Skip metrics for static assets
+        if request.url.path.startswith("/static"):
+            await self.app(scope, receive, send)
+            return
 
-    if settings.metrics_enabled:
-        REQUEST_COUNT.inc(method=method, endpoint=endpoint, status=str(status_code))
-        REQUEST_LATENCY.observe(duration, method=method, endpoint=endpoint)
+        ACTIVE_CONNECTIONS.inc(type="http")
+        start = time.monotonic()
+        status_code = 500
 
-    ACTIVE_CONNECTIONS.dec(type="http")
+        async def send_wrapper(message):
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+                # Inject correlation ID into response headers
+                headers = list(message.get("headers", []))
+                headers.append((b"x-correlation-id", cid.encode()))
+                message["headers"] = headers
+            await send(message)
 
-    if exc_to_raise is not None:
-        raise exc_to_raise
-
-    # Inject correlation ID into response headers
-    response.headers["X-Correlation-ID"] = cid
-    return response
-
-
-@app.middleware("http")
-async def audit_http_requests(request: Request, call_next):
-    """Audit API access events for HIPAA traceability."""
-    start = datetime.utcnow()
-    exc_to_raise = None
-
-    try:
-        response = await call_next(request)
-    except Exception as exc:
-        exc_to_raise = exc
-        response = None
-
-    # Post-processing: audit logging (never inside try/finally)
-    if settings.audit_logging_enabled and request.url.path.startswith("/api"):
         try:
-            elapsed_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
-            details = f"duration_ms={elapsed_ms}; cid={correlation_id_var.get() or '-'}"
-            if exc_to_raise is not None:
-                details = f"{details}; error={type(exc_to_raise).__name__}"
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            duration = time.monotonic() - start
+            endpoint = request.url.path
+            method = request.method
 
-            # Detect PHI access for HIPAA audit trail
-            phi_endpoints = {
-                "/api/transcribe", "/api/document", "/api/voice-intake",
-                "/api/sessions", "/api/fhir/export", "/api/fhir/push",
-                "/api/analyze-image",
-            }
-            path = request.url.path
-            phi_accessed = any(path.startswith(ep) for ep in phi_endpoints)
+            if settings.metrics_enabled:
+                REQUEST_COUNT.inc(method=method, endpoint=endpoint, status=str(status_code))
+                REQUEST_LATENCY.observe(duration, method=method, endpoint=endpoint)
 
-            await _write_audit_log(
-                request_path=path,
-                request_method=request.method,
-                status_code=response.status_code if response else 500,
-                user=getattr(request.state, "current_user", None),
-                ip_address=_extract_client_ip(request),
-                user_agent=request.headers.get("user-agent"),
-                details=details,
-                phi_accessed=phi_accessed,
-            )
-        except Exception:
-            logger.warning("Audit middleware: failed to write audit log", exc_info=True)
+            ACTIVE_CONNECTIONS.dec(type="http")
 
-    if exc_to_raise is not None:
-        raise exc_to_raise
 
-    return response
+class AuditHTTPMiddleware:
+    """Pure ASGI middleware for HIPAA audit trail logging."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope)
+        start = datetime.utcnow()
+        status_code = 500
+        caught_error = None
+
+        async def send_wrapper(message):
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except Exception as exc:
+            caught_error = exc
+            raise
+        finally:
+            if settings.audit_logging_enabled and request.url.path.startswith("/api"):
+                try:
+                    elapsed_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
+                    details = f"duration_ms={elapsed_ms}; cid={correlation_id_var.get() or '-'}"
+                    if caught_error is not None:
+                        details = f"{details}; error={type(caught_error).__name__}"
+
+                    # Detect PHI access for HIPAA audit trail
+                    phi_endpoints = {
+                        "/api/transcribe", "/api/document", "/api/voice-intake",
+                        "/api/sessions", "/api/fhir/export", "/api/fhir/push",
+                        "/api/analyze-image",
+                    }
+                    path = request.url.path
+                    phi_accessed = any(path.startswith(ep) for ep in phi_endpoints)
+
+                    await _write_audit_log(
+                        request_path=path,
+                        request_method=request.method,
+                        status_code=status_code,
+                        user=getattr(request.state, "current_user", None),
+                        ip_address=_extract_client_ip(request),
+                        user_agent=request.headers.get("user-agent"),
+                        details=details,
+                        phi_accessed=phi_accessed,
+                    )
+                except Exception:
+                    logger.warning("Audit middleware: failed to write audit log", exc_info=True)
+
+
+# Register pure ASGI middleware (outermost runs first)
+# Order: Audit → Metrics → CORS → routes
+app.add_middleware(MetricsAndCorrelationMiddleware)
+app.add_middleware(AuditHTTPMiddleware)
 
 
 # Shutdown event
