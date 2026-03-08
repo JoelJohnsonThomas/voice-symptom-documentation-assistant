@@ -357,46 +357,53 @@ async def metrics_and_correlation_middleware(request: Request, call_next):
 
     ACTIVE_CONNECTIONS.inc(type="http")
     start = time.monotonic()
-    response = None
+    exc_to_raise = None
+
     try:
         response = await call_next(request)
-        return response
-    finally:
-        duration = time.monotonic() - start
-        status_code = response.status_code if response else 500
-        endpoint = request.url.path
-        method = request.method
+    except Exception as exc:
+        exc_to_raise = exc
+        response = None
 
-        if settings.metrics_enabled:
-            REQUEST_COUNT.inc(method=method, endpoint=endpoint, status=str(status_code))
-            REQUEST_LATENCY.observe(duration, method=method, endpoint=endpoint)
+    # Post-processing: always runs, never inside try/finally
+    duration = time.monotonic() - start
+    status_code = response.status_code if response else 500
+    endpoint = request.url.path
+    method = request.method
 
-        ACTIVE_CONNECTIONS.dec(type="http")
+    if settings.metrics_enabled:
+        REQUEST_COUNT.inc(method=method, endpoint=endpoint, status=str(status_code))
+        REQUEST_LATENCY.observe(duration, method=method, endpoint=endpoint)
 
-        # Inject correlation ID into response headers
-        if response is not None:
-            response.headers["X-Correlation-ID"] = cid
+    ACTIVE_CONNECTIONS.dec(type="http")
+
+    if exc_to_raise is not None:
+        raise exc_to_raise
+
+    # Inject correlation ID into response headers
+    response.headers["X-Correlation-ID"] = cid
+    return response
 
 
 @app.middleware("http")
 async def audit_http_requests(request: Request, call_next):
     """Audit API access events for HIPAA traceability."""
-    response = None
-    caught_error = None
     start = datetime.utcnow()
+    exc_to_raise = None
 
     try:
         response = await call_next(request)
-        return response
     except Exception as exc:
-        caught_error = exc
-        raise
-    finally:
-        if settings.audit_logging_enabled and request.url.path.startswith("/api"):
+        exc_to_raise = exc
+        response = None
+
+    # Post-processing: audit logging (never inside try/finally)
+    if settings.audit_logging_enabled and request.url.path.startswith("/api"):
+        try:
             elapsed_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
             details = f"duration_ms={elapsed_ms}; cid={correlation_id_var.get() or '-'}"
-            if caught_error is not None:
-                details = f"{details}; error={type(caught_error).__name__}"
+            if exc_to_raise is not None:
+                details = f"{details}; error={type(exc_to_raise).__name__}"
 
             # Detect PHI access for HIPAA audit trail
             phi_endpoints = {
@@ -417,6 +424,13 @@ async def audit_http_requests(request: Request, call_next):
                 details=details,
                 phi_accessed=phi_accessed,
             )
+        except Exception:
+            logger.warning("Audit middleware: failed to write audit log", exc_info=True)
+
+    if exc_to_raise is not None:
+        raise exc_to_raise
+
+    return response
 
 
 # Shutdown event
