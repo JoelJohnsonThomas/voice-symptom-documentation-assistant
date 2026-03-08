@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     enforce_medgemma_terms_acknowledgement: bool = True
 
     # Authentication & Access Control
-    auth_enabled: bool = True
+    auth_enabled: bool = False
     jwt_secret_key: str = "CHANGE_ME_IN_PRODUCTION"
     jwt_access_token_expire_minutes: int = 60
     password_hash_iterations: int = 390000
@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     bootstrap_admin_full_name: str = "System Administrator"
 
     # Audit Logging
-    audit_logging_enabled: bool = True
+    audit_logging_enabled: bool = False
     
     # Audio
     max_audio_duration_seconds: int = 300
