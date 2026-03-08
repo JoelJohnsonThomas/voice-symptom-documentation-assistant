@@ -392,35 +392,31 @@ async def audit_http_requests(request: Request, call_next):
         caught_error = exc
         raise
     finally:
-        if not settings.audit_logging_enabled:
-            return
-        if not request.url.path.startswith("/api"):
-            return
+        if settings.audit_logging_enabled and request.url.path.startswith("/api"):
+            elapsed_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
+            details = f"duration_ms={elapsed_ms}; cid={correlation_id_var.get() or '-'}"
+            if caught_error is not None:
+                details = f"{details}; error={type(caught_error).__name__}"
 
-        elapsed_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
-        details = f"duration_ms={elapsed_ms}; cid={correlation_id_var.get() or '-'}"
-        if caught_error is not None:
-            details = f"{details}; error={type(caught_error).__name__}"
+            # Detect PHI access for HIPAA audit trail
+            phi_endpoints = {
+                "/api/transcribe", "/api/document", "/api/voice-intake",
+                "/api/sessions", "/api/fhir/export", "/api/fhir/push",
+                "/api/analyze-image",
+            }
+            path = request.url.path
+            phi_accessed = any(path.startswith(ep) for ep in phi_endpoints)
 
-        # Detect PHI access for HIPAA audit trail
-        phi_endpoints = {
-            "/api/transcribe", "/api/document", "/api/voice-intake",
-            "/api/sessions", "/api/fhir/export", "/api/fhir/push",
-            "/api/analyze-image",
-        }
-        path = request.url.path
-        phi_accessed = any(path.startswith(ep) for ep in phi_endpoints)
-
-        await _write_audit_log(
-            request_path=path,
-            request_method=request.method,
-            status_code=response.status_code if response else 500,
-            user=getattr(request.state, "current_user", None),
-            ip_address=_extract_client_ip(request),
-            user_agent=request.headers.get("user-agent"),
-            details=details,
-            phi_accessed=phi_accessed,
-        )
+            await _write_audit_log(
+                request_path=path,
+                request_method=request.method,
+                status_code=response.status_code if response else 500,
+                user=getattr(request.state, "current_user", None),
+                ip_address=_extract_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                details=details,
+                phi_accessed=phi_accessed,
+            )
 
 
 # Shutdown event
