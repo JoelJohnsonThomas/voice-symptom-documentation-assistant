@@ -19,12 +19,11 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
 import tempfile
@@ -80,15 +79,7 @@ from app.data_retention import (
 )
 from app.auth import (
     UserRole,
-    authenticate_user,
-    create_access_token,
-    ensure_bootstrap_admin,
-    get_current_user,
-    get_user_from_token,
-    is_default_bootstrap_password,
-    normalize_role,
     require_roles,
-    hash_password,
 )
 from app.models.medasr_service import get_medasr_service
 from app.models.medgemma_service import get_medgemma_service
@@ -200,33 +191,6 @@ class SessionCreateRequest(BaseModel):
     soap_objective: Optional[str] = None
     soap_assessment: Optional[str] = None
     soap_plan: Optional[str] = None
-
-
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    expires_in: int
-    role: str
-    username: str
-
-
-class UserResponse(BaseModel):
-    id: str
-    username: str
-    full_name: Optional[str] = None
-    role: str
-    is_active: bool
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class UserCreateRequest(BaseModel):
-    username: str = Field(min_length=3, max_length=64)
-    password: str = Field(min_length=8, max_length=256)
-    full_name: Optional[str] = Field(default=None, max_length=128)
-    role: str
 
 
 class AuditLogResponse(BaseModel):
@@ -367,19 +331,6 @@ async def startup_event():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
-        if settings.auth_enabled:
-            async with AsyncSessionLocal() as db:
-                created = await ensure_bootstrap_admin(db)
-                if created:
-                    logger.warning(
-                        "Bootstrap admin user created from environment configuration."
-                    )
-            if is_default_bootstrap_password():
-                logger.warning(
-                    "Bootstrap admin password is set to default value. "
-                    "Set BOOTSTRAP_ADMIN_PASSWORD to a strong secret."
-                )
-             
         logger.info("Loading MedASR model...")
         medasr = get_medasr_service()
         medasr_ready = medasr.is_ready()
@@ -425,100 +376,6 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Model preload failed: {e}")
         # Don't crash - allow lazy loading as fallback
-
-
-# =====================================================
-# AUTHENTICATION & RBAC ENDPOINTS
-# =====================================================
-
-@app.post("/api/auth/token", response_model=TokenResponse)
-async def login_for_access_token(
-    request: Request,
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: AsyncSession = Depends(get_db),
-):
-    """Exchange username/password credentials for a bearer token."""
-    if not settings.auth_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication is disabled by configuration.",
-        )
-
-    user = await authenticate_user(
-        db=db,
-        username=form_data.username,
-        password=form_data.password,
-    )
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    request.state.current_user = user
-    token = create_access_token(username=user.username, role=user.role)
-    return TokenResponse(
-        access_token=token,
-        token_type="bearer",
-        expires_in=settings.jwt_access_token_expire_minutes * 60,
-        role=user.role,
-        username=user.username,
-    )
-
-
-@app.get("/api/auth/me", response_model=UserResponse)
-async def read_current_user(current_user=Depends(get_current_user)):
-    """Return the currently authenticated user."""
-    return current_user
-
-
-@app.post(
-    "/api/auth/users",
-    response_model=UserResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_user(
-    payload: UserCreateRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.ADMIN)),
-):
-    """Create a new RBAC user (Admin only)."""
-    try:
-        role = normalize_role(payload.role)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    username = payload.username.strip().lower()
-    if not username:
-        raise HTTPException(status_code=400, detail="Username is required.")
-
-    existing = await crud.get_user_by_username(db=db, username=username)
-    if existing:
-        raise HTTPException(status_code=409, detail="Username already exists.")
-
-    hashed_password = hash_password(payload.password)
-    user = await crud.create_user(
-        db=db,
-        username=username,
-        full_name=payload.full_name,
-        role=role,
-        hashed_password=hashed_password,
-        is_active=True,
-    )
-    return user
-
-
-@app.get("/api/auth/users", response_model=List[UserResponse])
-async def list_users(
-    skip: int = 0,
-    limit: int = 100,
-    db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.ADMIN)),
-):
-    """List users (Admin only)."""
-    users = await crud.list_users(db=db, skip=skip, limit=min(limit, 500))
-    return users
 
 
 @app.get("/api/audit-logs", response_model=List[AuditLogResponse])
@@ -1011,55 +868,6 @@ async def websocket_transcribe(websocket: WebSocket):
     user = None
     client_ip = websocket.client.host if websocket.client else None
     user_agent = websocket.headers.get("user-agent")
-    role_allowlist = {role.value for role in INTAKE_AND_UP_ROLES}
-
-    token = websocket.query_params.get("token")
-    auth_header = websocket.headers.get("authorization")
-    if not token and auth_header and auth_header.lower().startswith("bearer "):
-        token = auth_header.split(" ", 1)[1].strip()
-
-    if settings.auth_enabled:
-        if not token:
-            await _write_audit_log(
-                request_path="/ws/transcribe",
-                request_method="WS",
-                status_code=401,
-                user=None,
-                ip_address=client_ip,
-                user_agent=user_agent,
-                details="websocket_missing_token",
-            )
-            await websocket.close(code=4401)
-            return
-
-        async with AsyncSessionLocal() as db:
-            try:
-                user = await get_user_from_token(db, token)
-            except HTTPException:
-                await _write_audit_log(
-                    request_path="/ws/transcribe",
-                    request_method="WS",
-                    status_code=401,
-                    user=None,
-                    ip_address=client_ip,
-                    user_agent=user_agent,
-                    details="websocket_invalid_token",
-                )
-                await websocket.close(code=4401)
-                return
-
-        if normalize_role(user.role) not in role_allowlist:
-            await _write_audit_log(
-                request_path="/ws/transcribe",
-                request_method="WS",
-                status_code=403,
-                user=user,
-                ip_address=client_ip,
-                user_agent=user_agent,
-                details="websocket_forbidden_role",
-            )
-            await websocket.close(code=4403)
-            return
 
     await websocket.accept()
     ACTIVE_CONNECTIONS.inc(type="websocket")

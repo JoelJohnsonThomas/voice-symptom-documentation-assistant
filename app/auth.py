@@ -11,12 +11,10 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 
 from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import crud
-from app.db.database import get_db
 
 
 class UserRole(str, Enum):
@@ -43,9 +41,6 @@ class SystemPrincipal:
     role = UserRole.ADMIN.value
     is_active = True
     created_at = datetime.now(timezone.utc)
-
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
 
 
 def normalize_role(value: str) -> str:
@@ -167,32 +162,14 @@ async def authenticate_user(
 
 async def get_user_from_token(db: AsyncSession, token: str):
     """Resolve user from bearer token."""
-    if not settings.auth_enabled:
-        return SystemPrincipal()
-
-    payload = decode_access_token(token)
-    username = payload.get("sub")
-    user = await crud.get_user_by_username(db, username=username)
-    if not user or not user.is_active:
-        raise _credentials_exception("Inactive or unknown user.")
-    return user
+    return SystemPrincipal()
 
 
 async def get_current_user(
     request: Request,
-    token: str | None = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(get_db),
 ):
     """Dependency returning the current authenticated user."""
-    if not settings.auth_enabled:
-        user = SystemPrincipal()
-        request.state.current_user = user
-        return user
-
-    if not token:
-        raise _credentials_exception("Missing bearer token.")
-
-    user = await get_user_from_token(db, token)
+    user = SystemPrincipal()
     request.state.current_user = user
     return user
 
@@ -208,11 +185,6 @@ def require_roles(*allowed_roles: UserRole | str):
         request: Request,
         current_user=Depends(get_current_user),
     ):
-        if settings.auth_enabled and normalize_role(current_user.role) not in normalized:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Insufficient role permissions.",
-            )
         request.state.current_user = current_user
         return current_user
 
@@ -221,28 +193,7 @@ def require_roles(*allowed_roles: UserRole | str):
 
 async def ensure_bootstrap_admin(db: AsyncSession) -> bool:
     """Ensure a bootstrap admin user exists."""
-    if not settings.auth_enabled:
-        return False
-
-    username = settings.bootstrap_admin_username.strip()
-    password = settings.bootstrap_admin_password
-    if not username or not password:
-        return False
-
-    existing = await crud.get_user_by_username(db, username=username)
-    if existing:
-        return False
-
-    hashed = hash_password(password)
-    await crud.create_user(
-        db=db,
-        username=username,
-        full_name=settings.bootstrap_admin_full_name,
-        role=UserRole.ADMIN.value,
-        hashed_password=hashed,
-        is_active=True,
-    )
-    return True
+    return False
 
 
 def is_default_bootstrap_password() -> bool:

@@ -109,15 +109,7 @@ const elements = {
     ehrModalCancel: document.getElementById('ehrModalCancel'),
     ehrModalSubmit: document.getElementById('ehrModalSubmit'),
     ehrServerUrl: document.getElementById('ehrServerUrl'),
-    ehrAuthToken: document.getElementById('ehrAuthToken'),
-
-    // Auth
-    authLoginForm: document.getElementById('authLoginForm'),
-    authUsername: document.getElementById('authUsername'),
-    authPassword: document.getElementById('authPassword'),
-    authLoginBtn: document.getElementById('authLoginBtn'),
-    authLogoutBtn: document.getElementById('authLogoutBtn'),
-    authStatusText: document.getElementById('authStatusText')
+    ehrAuthToken: document.getElementById('ehrAuthToken')
 };
 
 // =====================================================
@@ -158,8 +150,14 @@ const state = {
     sessionHistory: [],
 
     // Auth
-    authToken: localStorage.getItem('voxdoc_access_token'),
-    currentUser: null,
+    authToken: 'local-mode',
+    currentUser: {
+        id: 'system',
+        username: 'local_operator',
+        full_name: 'Local Operator',
+        role: 'admin',
+        is_active: true
+    },
 
     // PWA State
     deferredInstallPrompt: null,
@@ -170,6 +168,14 @@ const ROLE_LABELS = {
     admin: 'Admin',
     clinician: 'Clinician',
     intake_staff: 'Intake Staff'
+};
+
+const LOCAL_USER = {
+    id: 'system',
+    username: 'local_operator',
+    full_name: 'Local Operator',
+    role: 'admin',
+    is_active: true
 };
 
 function getRoleLabel(role) {
@@ -185,65 +191,32 @@ function getInitials(name) {
 }
 
 function setStoredToken(token) {
-    state.authToken = token || null;
-    if (token) {
-        localStorage.setItem('voxdoc_access_token', token);
-    } else {
-        localStorage.removeItem('voxdoc_access_token');
-    }
+    state.authToken = token || 'local-mode';
 }
 
 function updateAuthUI(message = null) {
-    const isAuthenticated = Boolean(state.currentUser && state.authToken);
+    const currentUser = state.currentUser || LOCAL_USER;
 
     if (elements.userAvatar) {
-        elements.userAvatar.textContent = isAuthenticated
-            ? getInitials(state.currentUser.full_name || state.currentUser.username)
-            : '--';
+        elements.userAvatar.textContent = getInitials(currentUser.full_name || currentUser.username);
     }
     if (elements.userName) {
-        elements.userName.textContent = isAuthenticated
-            ? (state.currentUser.full_name || state.currentUser.username)
-            : 'Not signed in';
+        elements.userName.textContent = currentUser.full_name || currentUser.username;
     }
     if (elements.userRole) {
-        elements.userRole.textContent = isAuthenticated
-            ? getRoleLabel(state.currentUser.role)
-            : 'Authentication required';
+        elements.userRole.textContent = `${getRoleLabel(currentUser.role)} (Authentication Disabled)`;
     }
-
-    if (elements.authStatusText) {
-        if (message) {
-            elements.authStatusText.textContent = message;
-        } else if (isAuthenticated) {
-            elements.authStatusText.textContent = `Signed in as ${state.currentUser.username} (${getRoleLabel(state.currentUser.role)}).`;
-        } else {
-            elements.authStatusText.textContent = 'Not signed in. Use your assigned credentials.';
-        }
-    }
-
-    if (elements.authUsername) elements.authUsername.disabled = isAuthenticated;
-    if (elements.authPassword) elements.authPassword.disabled = isAuthenticated;
-    if (elements.authLoginBtn) elements.authLoginBtn.disabled = isAuthenticated;
-    if (elements.authLogoutBtn) elements.authLogoutBtn.disabled = !isAuthenticated;
 
     updateSubmitButton();
 }
 
-async function apiFetch(url, options = {}, authRequired = true) {
+async function apiFetch(url, options = {}) {
     const headers = new Headers(options.headers || {});
-    if (state.authToken) {
-        headers.set('Authorization', `Bearer ${state.authToken}`);
-    }
 
     const response = await fetch(url, {
         ...options,
         headers
     });
-
-    if (response.status === 401 && authRequired) {
-        clearAuthSession('Session expired. Please sign in again.');
-    }
 
     if (response.status === 429) {
         const errorData = await response.json().catch(() => ({}));
@@ -295,9 +268,7 @@ function startQueuePolling() {
     hideQueueStatus();
     queuePollInterval = setInterval(async () => {
         try {
-            const resp = await fetch('/api/queue/status', {
-                headers: { 'Authorization': `Bearer ${state.authToken}` }
-            });
+            const resp = await apiFetch('/api/queue/status');
             if (!resp.ok) return;
             const data = await resp.json();
             if (data.queue_length > 0) {
@@ -423,108 +394,24 @@ function renderMonitoringData(data) {
 }
 
 function clearAuthSession(message = 'Signed out.') {
-    setStoredToken(null);
-    state.currentUser = null;
-    state.sessionHistory = [];
-    updateRecentDocsUI();
-    renderHistoryView();
+    setStoredToken('local-mode');
+    state.currentUser = { ...LOCAL_USER };
     updateAuthUI(message);
 }
 
 function requireAuthentication() {
-    if (state.currentUser && state.authToken) {
-        return true;
-    }
-    updateAuthUI('Please sign in to continue.');
-    elements.authUsername?.focus();
-    alert('Authentication required. Sign in from Settings.');
-    return false;
+    return true;
 }
 
 async function refreshCurrentUser() {
-    if (!state.authToken) {
-        state.currentUser = null;
-        updateAuthUI();
-        return false;
-    }
-
-    try {
-        const response = await apiFetch('/api/auth/me', { method: 'GET' }, false);
-        if (!response.ok) {
-            state.currentUser = null;
-            setStoredToken(null);
-            updateAuthUI('Sign in required.');
-            return false;
-        }
-        state.currentUser = await response.json();
-        updateAuthUI();
-        return true;
-    } catch (e) {
-        console.error('Failed to load current user', e);
-        state.currentUser = null;
-        setStoredToken(null);
-        updateAuthUI('Sign in required.');
-        return false;
-    }
+    state.currentUser = { ...LOCAL_USER };
+    setStoredToken('local-mode');
+    updateAuthUI('Authentication is disabled. All features are available.');
+    return true;
 }
 
 function setupAuth() {
-    elements.authLoginForm?.addEventListener('submit', handleLoginSubmit);
-    elements.authLogoutBtn?.addEventListener('click', () => {
-        clearAuthSession('Signed out successfully.');
-    });
-    updateAuthUI();
-}
-
-async function handleLoginSubmit(event) {
-    event.preventDefault();
-
-    const username = elements.authUsername?.value?.trim();
-    const password = elements.authPassword?.value || '';
-    if (!username || !password) {
-        updateAuthUI('Username and password are required.');
-        return;
-    }
-
-    if (elements.authLoginBtn) {
-        elements.authLoginBtn.disabled = true;
-        elements.authLoginBtn.textContent = 'Signing in...';
-    }
-
-    try {
-        const formBody = new URLSearchParams();
-        formBody.set('username', username);
-        formBody.set('password', password);
-
-        const response = await fetch('/api/auth/token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: formBody.toString()
-        });
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.detail || 'Invalid credentials.');
-        }
-
-        const tokenData = await response.json();
-        setStoredToken(tokenData.access_token);
-        await refreshCurrentUser();
-
-        if (elements.authPassword) {
-            elements.authPassword.value = '';
-        }
-
-        await loadSessionHistory();
-    } catch (e) {
-        console.error('Login failed', e);
-        clearAuthSession(`Sign in failed: ${e.message}`);
-    } finally {
-        if (elements.authLoginBtn) {
-            elements.authLoginBtn.textContent = 'Sign In';
-        }
-        updateAuthUI();
-    }
+    updateAuthUI('Authentication is disabled. All features are available.');
 }
 
 // =====================================================
@@ -537,8 +424,7 @@ async function handleLoginSubmit(event) {
  */
 function getWebSocketUrl() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const tokenQuery = state.authToken ? `?token=${encodeURIComponent(state.authToken)}` : '';
-    return `${protocol}//${window.location.host}/ws/transcribe${tokenQuery}`;
+    return `${protocol}//${window.location.host}/ws/transcribe`;
 }
 
 /**
@@ -920,9 +806,7 @@ async function init() {
     setupSOAPActions();
     setupSettings();
     await refreshCurrentUser();
-    if (state.currentUser) {
-        await loadSessionHistory();
-    }
+    await loadSessionHistory();
     setupPDFExport();
     setupPWA();
 }
@@ -1030,9 +914,6 @@ async function saveToOfflineQueue(type, data) {
 
 async function syncOfflineQueue() {
     try {
-        if (!state.currentUser || !state.authToken) {
-            return;
-        }
         const db = await dbPromise;
         const tx = db.transaction('offlineQueue', 'readonly');
         const store = tx.objectStore('offlineQueue');
@@ -1598,10 +1479,9 @@ function updateSubmitButton() {
     const textContent = elements.textInput?.value.trim();
     const hasLiveTranscript = state.liveTranscript && state.liveTranscript.trim().length > 0;
     const hasImage = state.uploadedImageFile !== null;
-    const isAuthenticated = Boolean(state.currentUser && state.authToken);
 
     if (elements.submitBtn) {
-        elements.submitBtn.disabled = !isAuthenticated || !(hasAudio || textContent || hasLiveTranscript || hasImage);
+        elements.submitBtn.disabled = !(hasAudio || textContent || hasLiveTranscript || hasImage);
     }
 }
 
@@ -2786,13 +2666,6 @@ function getSOAPHistoryEl(section) {
 
 async function loadSessionHistory() {
     try {
-        if (!state.currentUser || !state.authToken) {
-            state.sessionHistory = [];
-            updateRecentDocsUI();
-            renderHistoryView();
-            return;
-        }
-
         const response = await apiFetch('/api/sessions', { method: 'GET' });
         if (response.ok) {
             const data = await response.json();
@@ -2825,7 +2698,6 @@ async function loadSessionHistory() {
 
 async function saveSessionToHistory() {
     if (!state.currentDocumentation) return;
-    if (!state.currentUser || !state.authToken) return;
 
     const doc = state.currentDocumentation.documentation;
     const sessionData = {

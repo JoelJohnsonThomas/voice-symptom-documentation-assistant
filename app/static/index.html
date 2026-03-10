@@ -130,8 +130,8 @@
                 <div class="user-card">
                     <div class="user-avatar" id="userAvatar">--</div>
                     <div class="user-info">
-                        <div class="user-name" id="userName">Not signed in</div>
-                        <div class="user-plan" id="userRole">Authentication required</div>
+                        <div class="user-name" id="userName">Local Operator</div>
+                        <div class="user-plan" id="userRole">Admin (Authentication Disabled)</div>
                     </div>
                 </div>
             </div>
@@ -1233,23 +1233,7 @@
                 <div class="settings-grid">
                     <div class="settings-card full-width auth-settings-card">
                         <h3>Access Control</h3>
-                        <p id="authStatusText" class="auth-status-text">Not signed in. Use your assigned credentials.</p>
-                        <form id="authLoginForm" class="auth-login-form">
-                            <div class="auth-field">
-                                <label for="authUsername">Username</label>
-                                <input type="text" id="authUsername" placeholder="admin" autocomplete="username" required />
-                            </div>
-                            <div class="auth-field">
-                                <label for="authPassword">Password</label>
-                                <input type="password" id="authPassword" placeholder="••••••••" autocomplete="current-password"
-                                    required />
-                            </div>
-                            <div class="auth-actions">
-                                <button type="submit" class="action-btn primary auth-btn" id="authLoginBtn">Sign In</button>
-                                <button type="button" class="action-btn auth-btn" id="authLogoutBtn">Sign Out</button>
-                            </div>
-                        </form>
-                        <p class="auth-role-hint">Roles: Admin, Clinician, Intake Staff.</p>
+                        <p class="auth-status-text">Authentication has been removed. This deployment runs in local operator mode.</p>
                     </div>
 
                     <!-- Theme Matrix -->
