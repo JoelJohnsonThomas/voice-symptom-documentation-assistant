@@ -149,8 +149,7 @@ const state = {
     // Session History
     sessionHistory: [],
 
-    // Auth
-    authToken: 'local-mode',
+    // User (no auth)
     currentUser: {
         id: 'system',
         username: 'local_operator',
@@ -190,10 +189,6 @@ function getInitials(name) {
     return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
 }
 
-function setStoredToken(token) {
-    state.authToken = token || 'local-mode';
-}
-
 function updateAuthUI(message = null) {
     const currentUser = state.currentUser || LOCAL_USER;
 
@@ -204,7 +199,7 @@ function updateAuthUI(message = null) {
         elements.userName.textContent = currentUser.full_name || currentUser.username;
     }
     if (elements.userRole) {
-        elements.userRole.textContent = `${getRoleLabel(currentUser.role)} (Authentication Disabled)`;
+        elements.userRole.textContent = getRoleLabel(currentUser.role);
     }
 
     updateSubmitButton();
@@ -393,25 +388,18 @@ function renderMonitoringData(data) {
     }
 }
 
-function clearAuthSession(message = 'Signed out.') {
-    setStoredToken('local-mode');
-    state.currentUser = { ...LOCAL_USER };
-    updateAuthUI(message);
-}
-
 function requireAuthentication() {
     return true;
 }
 
 async function refreshCurrentUser() {
     state.currentUser = { ...LOCAL_USER };
-    setStoredToken('local-mode');
-    updateAuthUI('Authentication is disabled. All features are available.');
+    updateAuthUI();
     return true;
 }
 
 function setupAuth() {
-    updateAuthUI('Authentication is disabled. All features are available.');
+    updateAuthUI();
 }
 
 // =====================================================

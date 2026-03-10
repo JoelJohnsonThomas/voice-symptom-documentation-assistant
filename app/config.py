@@ -36,15 +36,6 @@ class Settings(BaseSettings):
     medgemma_terms_acknowledged: bool = False
     enforce_medgemma_terms_acknowledgement: bool = True
 
-    # Authentication & Access Control
-    auth_enabled: bool = False
-    jwt_secret_key: str = "CHANGE_ME_IN_PRODUCTION"
-    jwt_access_token_expire_minutes: int = 60
-    password_hash_iterations: int = 390000
-    bootstrap_admin_username: str = "admin"
-    bootstrap_admin_password: str = "admin12345"
-    bootstrap_admin_full_name: str = "System Administrator"
-
     # Audit Logging
     audit_logging_enabled: bool = False
     

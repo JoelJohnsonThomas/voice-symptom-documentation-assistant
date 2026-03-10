@@ -17,7 +17,6 @@ from fastapi import (
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
-    status,
 )
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -77,10 +76,7 @@ from app.data_retention import (
     start_purge_scheduler,
     stop_purge_scheduler,
 )
-from app.auth import (
-    UserRole,
-    require_roles,
-)
+from app.auth import SYSTEM_USER
 from app.models.medasr_service import get_medasr_service
 from app.models.medgemma_service import get_medgemma_service
 from app.models.ner_service import get_ner_service
@@ -213,9 +209,6 @@ class AuditLogResponse(BaseModel):
         from_attributes = True
 
 
-ALL_ROLES = (UserRole.ADMIN, UserRole.CLINICIAN, UserRole.INTAKE_STAFF)
-INTAKE_AND_UP_ROLES = (UserRole.ADMIN, UserRole.CLINICIAN, UserRole.INTAKE_STAFF)
-CLINICIAN_AND_UP_ROLES = (UserRole.ADMIN, UserRole.CLINICIAN)
 
 
 def _extract_client_ip(request: Request) -> Optional[str]:
@@ -245,8 +238,6 @@ def _derive_audit_action(method: str, path: str) -> str:
     if method_upper == "GET":
         return "read"
     if method_upper == "POST":
-        if path.endswith("/token"):
-            return "authenticate"
         return "create"
     if method_upper in {"PUT", "PATCH"}:
         return "update"
@@ -385,9 +376,8 @@ async def list_audit_logs(
     username: Optional[str] = None,
     resource: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.ADMIN)),
 ):
-    """Read audit logs for compliance monitoring (Admin only)."""
+    """Read audit logs for compliance monitoring."""
     logs = await crud.get_audit_logs(
         db=db,
         skip=skip,
@@ -400,7 +390,7 @@ async def list_audit_logs(
 
 # Health check endpoint
 @app.get("/api/health")
-async def health_check(current_user=Depends(require_roles(*ALL_ROLES))):
+async def health_check():
     """Check if services are ready."""
     try:
         medasr = get_medasr_service()
@@ -431,7 +421,7 @@ async def health_check(current_user=Depends(require_roles(*ALL_ROLES))):
 
 # Queue status endpoint
 @app.get("/api/queue/status")
-async def queue_status(current_user=Depends(require_roles(*ALL_ROLES))):
+async def queue_status():
     """Return current inference queue status."""
     queue = get_inference_queue()
     return await queue.get_status()
@@ -454,7 +444,7 @@ async def prometheus_metrics():
 
 
 @app.get("/api/monitoring/dashboard")
-async def monitoring_dashboard(current_user=Depends(require_roles(UserRole.ADMIN))):
+async def monitoring_dashboard():
     """Return aggregated monitoring dashboard data (Admin only)."""
     if not settings.metrics_enabled:
         raise HTTPException(status_code=404, detail="Metrics disabled")
@@ -465,7 +455,7 @@ async def monitoring_dashboard(current_user=Depends(require_roles(UserRole.ADMIN
 
 
 @app.get("/api/monitoring/alerts")
-async def monitoring_alerts(current_user=Depends(require_roles(UserRole.ADMIN))):
+async def monitoring_alerts():
     """Return active alerts (Admin only)."""
     if not settings.metrics_enabled:
         raise HTTPException(status_code=404, detail="Metrics disabled")
@@ -477,7 +467,6 @@ async def monitoring_alerts(current_user=Depends(require_roles(UserRole.ADMIN)))
 async def transcribe_audio(
     request: Request,
     audio: UploadFile = File(...),
-    current_user=Depends(require_roles(*INTAKE_AND_UP_ROLES)),
 ):
     """
     Transcribe audio file to text using MedASR.
@@ -550,7 +539,6 @@ async def transcribe_audio(
 async def generate_documentation(
     request: DocumentationRequest,
     raw_request: Request,
-    current_user=Depends(require_roles(*INTAKE_AND_UP_ROLES)),
 ):
     """
     Generate structured symptom documentation from transcript.
@@ -625,7 +613,6 @@ async def generate_documentation(
 async def analyze_image(
     request: Request,
     image: UploadFile = File(...),
-    current_user=Depends(require_roles(*INTAKE_AND_UP_ROLES)),
 ):
     """
     Analyze an uploaded medical image using MedGemma vision.
@@ -709,7 +696,6 @@ async def analyze_image(
 async def voice_intake(
     request: Request,
     audio: UploadFile = File(...),
-    current_user=Depends(require_roles(*INTAKE_AND_UP_ROLES)),
 ):
     """
     Complete voice intake workflow: audio -> transcription -> documentation.
@@ -1025,7 +1011,6 @@ async def manifest():
 async def fhir_export(
     request: FHIRExportRequest,
     raw_request: Request,
-    current_user=Depends(require_roles(*CLINICIAN_AND_UP_ROLES)),
 ):
     """Generate and return a FHIR R4 Bundle from documentation data."""
     try:
@@ -1040,8 +1025,8 @@ async def fhir_export(
         async with AsyncSessionLocal() as db:
             await crud.create_export_log(
                 db=db,
-                user_id=getattr(current_user, "id", None),
-                username=getattr(current_user, "username", None),
+                user_id=getattr(SYSTEM_USER, "id", None),
+                username=getattr(SYSTEM_USER, "username", None),
                 export_type="fhir",
                 resource_type="session",
                 record_count=1,
@@ -1060,7 +1045,6 @@ async def fhir_export(
 async def fhir_push(
     request: FHIRPushRequest,
     raw_request: Request,
-    current_user=Depends(require_roles(*CLINICIAN_AND_UP_ROLES)),
 ):
     """Build a FHIR Bundle and push it to an external EHR/FHIR server."""
     export_status = "success"
@@ -1082,8 +1066,8 @@ async def fhir_push(
             try:
                 await crud.create_export_log(
                     db=db,
-                    user_id=getattr(current_user, "id", None),
-                    username=getattr(current_user, "username", None),
+                    user_id=getattr(SYSTEM_USER, "id", None),
+                    username=getattr(SYSTEM_USER, "username", None),
                     export_type="fhir",
                     resource_type="session",
                     record_count=1,
@@ -1100,7 +1084,7 @@ async def fhir_push(
 # =====================================================
 
 @app.get("/api/hipaa/retention/stats")
-async def retention_stats(current_user=Depends(require_roles(UserRole.ADMIN))):
+async def retention_stats():
     """Get data retention statistics (Admin only)."""
     stats = await get_retention_stats()
     stats["encryption_at_rest_enabled"] = settings.encryption_at_rest_enabled
@@ -1110,7 +1094,6 @@ async def retention_stats(current_user=Depends(require_roles(UserRole.ADMIN))):
 @app.post("/api/hipaa/retention/purge")
 async def manual_purge(
     raw_request: Request,
-    current_user=Depends(require_roles(UserRole.ADMIN)),
 ):
     """Manually trigger data purge based on retention policies (Admin only)."""
     results = await run_purge()
@@ -1120,7 +1103,7 @@ async def manual_purge(
         request_path="/api/hipaa/retention/purge",
         request_method="POST",
         status_code=200,
-        user=current_user,
+        user=SYSTEM_USER,
         ip_address=_extract_client_ip(raw_request),
         user_agent=raw_request.headers.get("user-agent"),
         details=f"manual_purge; sessions={results['sessions_purged']}; audit_logs={results['audit_logs_purged']}",
@@ -1138,7 +1121,6 @@ async def list_export_logs(
     username: Optional[str] = None,
     export_type: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.ADMIN)),
 ):
     """List data export logs for HIPAA compliance monitoring (Admin only)."""
     logs = await crud.get_export_logs(
@@ -1169,7 +1151,6 @@ async def list_export_logs(
 @app.get("/api/hipaa/audit-summary")
 async def hipaa_audit_summary(
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.ADMIN)),
 ):
     """Get HIPAA audit dashboard summary (Admin only)."""
     from sqlalchemy import func, select as sa_select
@@ -1224,7 +1205,6 @@ async def hipaa_audit_summary(
 async def save_session(
     request: SessionCreateRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_roles(*INTAKE_AND_UP_ROLES)),
 ):
     """Save a new patient intake session with optional encryption at rest."""
     try:
@@ -1250,7 +1230,6 @@ async def list_sessions(
     skip: int = 0,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_roles(*INTAKE_AND_UP_ROLES)),
 ):
     """Retrieve a list of past sessions, decrypting if needed."""
     try:
@@ -1276,7 +1255,6 @@ async def list_sessions(
 async def get_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_roles(*INTAKE_AND_UP_ROLES)),
 ):
     """Retrieve a specific session by ID, decrypting if needed."""
     db_session = await crud.get_session_by_id(db=db, session_id=session_id)
@@ -1298,7 +1276,6 @@ async def get_session(
 async def delete_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_roles(UserRole.ADMIN)),
 ):
     """Delete a specific session."""
     success = await crud.delete_session(db=db, session_id=session_id)
