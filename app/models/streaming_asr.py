@@ -123,10 +123,15 @@ class StreamingASRSession:
                 return None
 
             # Transcribe the full buffer
-            full_transcript = medasr.transcribe(
+            result = medasr.transcribe(
                 audio_array=self._audio_buffer.copy(),
                 sample_rate=self.sample_rate
             )
+            # transcribe() returns (transcript, language) tuple
+            if isinstance(result, tuple):
+                full_transcript, _ = result
+            else:
+                full_transcript = result
 
             self._last_transcribe_time = time.time()
 
@@ -172,10 +177,15 @@ class StreamingASRSession:
             from app.models.medasr_service import get_medasr_service
 
             medasr = get_medasr_service()
-            full_transcript = medasr.transcribe(
+            result = medasr.transcribe(
                 audio_array=self._audio_buffer.copy(),
                 sample_rate=self.sample_rate
             )
+            # transcribe() returns (transcript, language) tuple
+            if isinstance(result, tuple):
+                full_transcript, _ = result
+            else:
+                full_transcript = result
 
             self._last_transcript = full_transcript
 

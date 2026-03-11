@@ -60,7 +60,7 @@ class MedASRService:
         audio_path: str = None,
         audio_array: np.ndarray = None,
         sample_rate: int = None
-    ) -> str:
+    ) -> tuple[str, str]:
         """
         Transcribe audio to text using MedASR.
         
@@ -70,7 +70,7 @@ class MedASRService:
             sample_rate: Sample rate of audio_array
             
         Returns:
-            Transcribed text
+            Tuple of (transcribed text, detected language code)
         """
         try:
             # Load audio if path provided
