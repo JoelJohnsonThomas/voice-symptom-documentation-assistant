@@ -24,6 +24,7 @@
 
 - [Overview](#overview)
 - [Key Features](#key-features)
+- [User Interface](#user-interface)
 - [Architecture](#architecture)
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
@@ -69,6 +70,16 @@ The pipeline combines medical-grade ASR, a multimodal language model (MedGemma),
 | **Observability** | Prometheus-compatible metrics, structured JSON logging with correlation IDs |
 | **Rate Limiting** | Sliding-window rate limiter + async inference queue with configurable concurrency |
 | **PWA Frontend** | Installable progressive web app with multi-theme UI and offline indicators |
+
+---
+
+## User Interface
+
+| Dashboard | Settings Page |
+| :---: | :---: |
+| <img src="UI/Dashboard.png" alt="Dashboard" width="100%"> | <img src="UI/Settings_Page.png" alt="Settings Page" width="100%"> |
+| **Monitoring Dashboard** | **HIPAA Compliance** |
+| <img src="UI/Monitoring_Page.png" alt="Monitoring Page" width="100%"> | <img src="UI/HIPAA_Page.png" alt="HIPAA Page" width="100%"> |
 
 ---
 
