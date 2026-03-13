@@ -6,7 +6,32 @@ These prompts are designed to extract and structure information ONLY.
 They explicitly prohibit clinical decision-making, triage, or urgency assessment.
 """
 
-def create_documentation_prompt(transcript: str, language: str = "en") -> str:
+def create_followup_questions_prompt(transcript: str, language: str = "en") -> str:
+    """
+    Generate targeted follow-up questions for clinical information missing from
+    the patient's initial statement.
+
+    Returns a prompt that asks MedGemma to produce a JSON object with a
+    "questions" key containing 2-3 patient-friendly follow-up questions.
+    """
+    clean_transcript = transcript.replace("</s>", "").replace("<s>", "").strip().lstrip('.')
+
+    return f"""A patient has described their symptoms. Your job is to identify 2-3 pieces of clinical information that are MISSING and would help a clinician document the case.
+
+Patient Statement: "{clean_transcript}"
+
+Rules:
+- Only ask about information the patient has NOT already mentioned
+- Use simple, patient-friendly language — no medical jargon
+- Prioritise: severity/pain scale, duration, exact location, quality (sharp/dull/burning), what makes it better or worse, other symptoms
+- Generate EXACTLY 2 or 3 questions — never fewer, never more
+- If the statement is already detailed, ask the 2 most useful clarifying questions{chr(10) + f'- Ask questions in {language} since that is the patient language.' if language != 'en' else ''}
+
+Respond ONLY with a JSON object in this exact format (no extra text):
+{{"questions": ["Question 1?", "Question 2?", "Question 3?"]}}"""
+
+
+def create_documentation_prompt(transcript: str, language: str = "en", followup_qa: list | None = None) -> str:
     """
     Create clean, direct prompt without chat artifacts.
     Cleans transcript before formatting to remove ASR artifacts.
@@ -19,11 +44,21 @@ def create_documentation_prompt(transcript: str, language: str = "en") -> str:
     """
     # Clean the transcript first - remove ASR special tokens
     clean_transcript = transcript.replace("</s>", "").replace("<s>", "").strip().lstrip('.')
-    
+
+    # Build optional follow-up Q&A block
+    followup_block = ""
+    if followup_qa:
+        answered = [qa for qa in followup_qa if qa.get("answer", "").strip()]
+        if answered:
+            qa_lines = "\n".join(
+                f"Q: {qa['question']}\nA: {qa['answer']}" for qa in answered
+            )
+            followup_block = f"\n\nAdditional information provided by the patient:\n{qa_lines}\n"
+
     # Direct instruction asking for structured extraction + narrative SOAP
     return f"""Analyze this patient statement for medical documentation.
 
-Patient Statement: "{clean_transcript}"
+Patient Statement: "{clean_transcript}"{followup_block}
 
 Extract ONLY information the patient explicitly stated:
 
@@ -166,22 +201,33 @@ OBSERVATIONS: [detailed visual description]
 NOTABLE FEATURES: [any distinguishing characteristics]"""
 
 
-def create_documentation_with_image_prompt(transcript: str, image_description: str, language: str = "en") -> str:
+def create_documentation_with_image_prompt(transcript: str, image_description: str, language: str = "en", followup_qa: list | None = None) -> str:
     """
     Create a documentation prompt that includes both transcript and image findings.
-    
+
     Args:
         transcript: Patient's symptom report
         image_description: AI-generated description of uploaded image
-        
+        followup_qa: Optional list of {"question": ..., "answer": ...} dicts
+
     Returns:
         Formatted prompt string incorporating both text and visual data
     """
     clean_transcript = transcript.replace("</s>", "").replace("<s>", "").strip().lstrip('.')
+
+    # Build optional follow-up Q&A block
+    followup_block = ""
+    if followup_qa:
+        answered = [qa for qa in followup_qa if qa.get("answer", "").strip()]
+        if answered:
+            qa_lines = "\n".join(
+                f"Q: {qa['question']}\nA: {qa['answer']}" for qa in answered
+            )
+            followup_block = f"\n\nAdditional information provided by the patient:\n{qa_lines}\n"
     
     return f"""Analyze this patient statement AND accompanying image findings for medical documentation.
 
-Patient Statement: "{clean_transcript}"
+Patient Statement: "{clean_transcript}"{followup_block}
 
 Image Findings (from uploaded photo):
 {image_description}

@@ -649,7 +649,59 @@ class MedGemmaService:
         
         return True, ""
     
-    def generate_documentation(self, transcript: str, image_findings: Optional[str] = None, detected_language: str = "en", similar_cases: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    def generate_followup_questions(self, transcript: str, detected_language: str = "en") -> List[str]:
+        """
+        Generate 2-3 targeted follow-up questions for missing clinical information.
+
+        Returns:
+            List of patient-friendly question strings (2-3 items).
+            Falls back to generic questions if the model fails.
+        """
+        from app.prompts.documentation_prompts import create_followup_questions_prompt
+
+        try:
+            prompt_content = create_followup_questions_prompt(transcript, language=detected_language)
+            messages = [{"role": "user", "content": prompt_content}]
+            prompt = self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+
+            inputs = self.tokenizer(prompt, return_tensors="pt", padding=True).to(self.model.device)
+
+            with torch.inference_mode():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=256,
+                    do_sample=False,
+                    repetition_penalty=settings.medgemma_repetition_penalty,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                )
+
+            generated_ids = outputs[0][inputs.input_ids.shape[1]:]
+            decoded = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+            self._safe_log_generated_text("Follow-up questions response", decoded)
+
+            json_str = self._extract_json_from_response(decoded)
+            data = json.loads(json_str)
+            questions = data.get("questions", [])
+            if isinstance(questions, list) and 2 <= len(questions) <= 3:
+                return [str(q) for q in questions]
+
+            # If the list is longer than 3, trim; if shorter, fall through to fallback
+            if isinstance(questions, list) and len(questions) > 3:
+                return [str(q) for q in questions[:3]]
+
+        except Exception as e:
+            logger.warning(f"Follow-up question generation failed, using fallback: {e}")
+
+        # Rule-based fallback questions
+        return [
+            "On a scale of 1 to 10, how would you rate the severity of your symptoms?",
+            "How long have you been experiencing these symptoms?",
+            "Does anything make your symptoms better or worse?",
+        ]
+
+    def generate_documentation(self, transcript: str, image_findings: Optional[str] = None, detected_language: str = "en", similar_cases: Optional[List[Dict[str, Any]]] = None, followup_qa: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         """
         Generate structured symptom documentation from transcript.
         
@@ -675,9 +727,9 @@ class MedGemmaService:
             # Create prompt content — use image-aware prompt if image findings available
             if image_findings:
                 logger.info("Including image findings in documentation prompt")
-                prompt_content = create_documentation_with_image_prompt(transcript, image_findings, language=detected_language)
+                prompt_content = create_documentation_with_image_prompt(transcript, image_findings, language=detected_language, followup_qa=followup_qa)
             else:
-                prompt_content = create_documentation_prompt(transcript, language=detected_language)
+                prompt_content = create_documentation_prompt(transcript, language=detected_language, followup_qa=followup_qa)
             
             # MedGemma 1.5 is a chat model - use chat template
             messages = [
