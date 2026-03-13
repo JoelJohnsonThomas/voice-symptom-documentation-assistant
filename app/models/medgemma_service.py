@@ -649,7 +649,7 @@ class MedGemmaService:
         
         return True, ""
     
-    def generate_documentation(self, transcript: str, image_findings: Optional[str] = None, detected_language: str = "en") -> Dict[str, Any]:
+    def generate_documentation(self, transcript: str, image_findings: Optional[str] = None, detected_language: str = "en", similar_cases: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
         Generate structured symptom documentation from transcript.
         
@@ -760,7 +760,7 @@ class MedGemmaService:
             
             # Generate O, A, P sections using MedGemma
             try:
-                oap_sections = self.generate_soap_sections(transcript, documentation, detected_language=detected_language)
+                oap_sections = self.generate_soap_sections(transcript, documentation, detected_language=detected_language, similar_cases=similar_cases)
                 documentation.update(oap_sections)
             except Exception as oap_err:
                 logger.warning(f"O/A/P generation failed, using defaults: {oap_err}")
@@ -785,7 +785,7 @@ class MedGemmaService:
             logger.error(f"Documentation generation failed: {e}")
             raise
     
-    def generate_soap_sections(self, transcript: str, subjective_data: dict, detected_language: str = "en") -> dict:
+    def generate_soap_sections(self, transcript: str, subjective_data: dict, detected_language: str = "en", similar_cases: Optional[List[Dict[str, Any]]] = None) -> dict:
         """
         Generate Objective, Assessment, and Plan SOAP sections.
         
@@ -803,7 +803,7 @@ class MedGemmaService:
         
         from app.prompts.documentation_prompts import create_soap_oap_prompt
         
-        prompt_content = create_soap_oap_prompt(transcript, subjective_data, language=detected_language)
+        prompt_content = create_soap_oap_prompt(transcript, subjective_data, language=detected_language, similar_cases=similar_cases)
         
         # Use chat template
         messages = [{"role": "user", "content": prompt_content}]

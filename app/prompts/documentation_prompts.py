@@ -47,7 +47,12 @@ Important extraction rules:
 - Use plain English, no markdown formatting.{chr(10) + f'- BILINGUAL OUTPUT REQUIRED: The patient spoke in {language}. All extracted symptoms and the SOAP subjective note MUST be bilingual, formatted as "[{language} text] / [English translation]".' if language != 'en' else ''}"""
 
 
-def create_soap_oap_prompt(transcript: str, subjective_data: dict, language: str = "en") -> str:
+def create_soap_oap_prompt(
+    transcript: str,
+    subjective_data: dict,
+    language: str = "en",
+    similar_cases: list | None = None,
+) -> str:
     """
     Create a prompt for generating Objective, Assessment, and Plan SOAP sections.
     
@@ -72,12 +77,27 @@ def create_soap_oap_prompt(transcript: str, subjective_data: dict, language: str
     location = symptom_details.get("location", "not specified")
     severity = symptom_details.get("severity_description", "not specified")
     
+    # Build optional reference-cases block from RAG retrieval
+    reference_block = ""
+    if similar_cases:
+        case_texts = []
+        for i, case in enumerate(similar_cases, start=1):
+            doc = case.get("document", "").strip()
+            if doc:
+                case_texts.append(f"Reference case {i}:\n{doc}")
+        if case_texts:
+            reference_block = (
+                "\nSimilar past cases (for reference only — do not copy verbatim):\n"
+                + "\n\n".join(case_texts)
+                + "\n"
+            )
+
     return f"""You are generating SOAP note sections for CLINICIAN REVIEW.
 
 COMPLIANCE: These are ADMINISTRATIVE SUGGESTIONS only. All clinical decisions
 must be made by a qualified healthcare professional. Do NOT make definitive
 diagnoses or prescribe specific treatments.
-
+{reference_block}
 Patient Information:
 - Chief Complaint: {chief_complaint}
 - Symptoms: {symptoms_str}

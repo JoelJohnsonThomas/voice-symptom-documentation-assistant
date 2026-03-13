@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     api_port: int = 8000
     api_reload: bool = False
 
+    # RAG (Retrieval-Augmented Generation)
+    rag_enabled: bool = False
+    rag_embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    rag_persist_dir: str = "./rag_store"
+    rag_top_k: int = 3
+
     # Logging
     log_level: str = "INFO"
     
