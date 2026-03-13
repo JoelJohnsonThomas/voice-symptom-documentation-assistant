@@ -8,26 +8,49 @@ They explicitly prohibit clinical decision-making, triage, or urgency assessment
 
 def create_followup_questions_prompt(transcript: str, language: str = "en") -> str:
     """
-    Generate targeted follow-up questions for clinical information missing from
+    Generate clinically grounded follow-up questions for information missing from
     the patient's initial statement.
+
+    Modelled on real triage nurse assessment: demographics, red-flag associated
+    symptoms, severity, progression, and relevant history.
 
     Returns a prompt that asks MedGemma to produce a JSON object with a
     "questions" key containing 2-3 patient-friendly follow-up questions.
     """
     clean_transcript = transcript.replace("</s>", "").replace("<s>", "").strip().lstrip('.')
 
-    return f"""A patient has described their symptoms. Your job is to identify 2-3 pieces of clinical information that are MISSING and would help a clinician document the case.
+    language_rule = (
+        f"\n- Ask all questions in {language} since that is the patient's language."
+        if language != "en"
+        else ""
+    )
+
+    return f"""A patient has just described their symptoms to a triage nurse. Based ONLY on what the patient said, identify the 2-3 most clinically important pieces of information that are MISSING and would help a clinician assess the case.
 
 Patient Statement: "{clean_transcript}"
 
-Rules:
-- Only ask about information the patient has NOT already mentioned
-- Use simple, patient-friendly language — no medical jargon
-- Prioritise: severity/pain scale, duration, exact location, quality (sharp/dull/burning), what makes it better or worse, other symptoms
-- Generate EXACTLY 2 or 3 questions — never fewer, never more
-- If the statement is already detailed, ask the 2 most useful clarifying questions{chr(10) + f'- Ask questions in {language} since that is the patient language.' if language != 'en' else ''}
+Think like an experienced triage nurse. Prioritise missing information in this order:
+1. Patient demographics relevant to the complaint — age is almost always important; ask about pregnancy if relevant
+2. Objective measurements already available to the patient — e.g. temperature reading if they mention fever, pain score (1-10) if they mention pain
+3. "Red flag" associated symptoms specific to the chief complaint:
+   - Fever → chills, rash, stiff neck, difficulty breathing, recent travel
+   - Chest pain → radiation to arm/jaw/shoulder, sweating, nausea, shortness of breath
+   - Headache → sudden "thunderclap" onset, stiff neck, sensitivity to light, vision changes
+   - Shortness of breath → chest pain, wheeze, ankle swelling, history of asthma/heart disease
+   - Abdominal pain → location, vomiting, diarrhoea, blood in stool, last menstrual period
+   - Dizziness/fainting → loss of consciousness, palpitations, positional component
+   - Back pain → radiation down the leg, numbness/tingling, bladder or bowel changes
+   - Rash → new medications or foods, throat/facial swelling, fever
+4. Progression — is it getting better, worse, or staying the same?
+5. Relevant history — prior episodes, medications already tried, relevant chronic conditions
 
-Respond ONLY with a JSON object in this exact format (no extra text):
+Rules:
+- Ask ONLY about information the patient has NOT already mentioned
+- Use simple, caring, patient-friendly language — no medical jargon
+- Each question must be a single clear question
+- Generate EXACTLY 2 or 3 questions — never fewer, never more{language_rule}
+
+Respond ONLY with a JSON object in this exact format (no extra text, no markdown):
 {{"questions": ["Question 1?", "Question 2?", "Question 3?"]}}"""
 
 
