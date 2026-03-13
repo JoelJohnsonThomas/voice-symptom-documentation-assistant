@@ -543,6 +543,16 @@ body .action-card {
     flex-direction: column;
     overflow: hidden;
     position: relative;
+    min-height: 0;
+}
+
+/* View containers are flex items inside .main-content */
+.view-container {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
 }
 
 /* Header */
