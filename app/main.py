@@ -86,6 +86,7 @@ from app.models.medgemma_service import get_medgemma_service
 from app.models.ner_service import get_ner_service
 from app.models.fhir_service import get_fhir_service
 from app.models.streaming_asr import StreamingASRSession
+from app.models import rag_service
 from app.utils.audio_handler import AudioHandler
 
 from app.db.database import AsyncSessionLocal, Base, engine, get_db
@@ -582,12 +583,18 @@ async def generate_documentation(
                 detail="Transcript too short (minimum 10 characters required)"
             )
 
+        # Retrieve similar past cases for RAG context
+        similar_cases = rag_service.retrieve_similar_sessions(request.transcript)
+        if similar_cases:
+            logger.info(f"RAG: retrieved {len(similar_cases)} similar cases for documentation")
+
         # Generate documentation
         medgemma = get_medgemma_service()
         model_start = time.monotonic()
         documentation = medgemma.generate_documentation(
             request.transcript,
-            image_findings=request.image_findings
+            image_findings=request.image_findings,
+            similar_cases=similar_cases,
         )
         INFERENCE_LATENCY.observe(time.monotonic() - model_start, model="medgemma")
         INFERENCE_COUNT.inc(model="medgemma", status="success")
@@ -760,16 +767,21 @@ async def voice_intake(
             transcript, detected_language = result, "en"
         logger.info(f"Transcription complete: {len(transcript)} characters, Language: {detected_language}")
 
-        # Step 3: Generate documentation
+        # Step 3: Retrieve similar past cases for RAG context
+        similar_cases = rag_service.retrieve_similar_sessions(transcript)
+        if similar_cases:
+            logger.info(f"RAG: retrieved {len(similar_cases)} similar cases for voice intake")
+
+        # Step 4: Generate documentation
         ACTIVE_INFERENCES.dec(model="medasr")
         ACTIVE_INFERENCES.inc(model="medgemma")
         medgemma = get_medgemma_service()
         model_start = time.monotonic()
-        documentation = medgemma.generate_documentation(transcript, detected_language=detected_language)
+        documentation = medgemma.generate_documentation(transcript, detected_language=detected_language, similar_cases=similar_cases)
         INFERENCE_LATENCY.observe(time.monotonic() - model_start, model="medgemma")
         INFERENCE_COUNT.inc(model="medgemma", status="success")
 
-        # Step 4: Extract Medical Entities
+        # Step 5: Extract Medical Entities
         ACTIVE_INFERENCES.dec(model="medgemma")
         ACTIVE_INFERENCES.inc(model="ner")
         ner_service = get_ner_service()
@@ -1239,6 +1251,24 @@ async def save_session(
             sanitized_payload["is_encrypted"] = True
 
         db_session = await crud.create_session(db=db, session_data=sanitized_payload)
+
+        # Index session in RAG store (use plaintext values, not encrypted ones)
+        if settings.rag_enabled:
+            raw = request.model_dump()
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: rag_service.index_session(
+                    session_id=db_session.id,
+                    transcript=raw.get("transcript", ""),
+                    chief_complaint=raw.get("chief_complaint"),
+                    soap_subjective=raw.get("soap_subjective"),
+                    soap_objective=raw.get("soap_objective"),
+                    soap_assessment=raw.get("soap_assessment"),
+                    soap_plan=raw.get("soap_plan"),
+                ),
+            )
+
         return db_session
     except Exception as e:
         logger.error(f"Failed to save session: {e}")
@@ -1304,7 +1334,85 @@ async def delete_session(
     success = await crud.delete_session(db=db, session_id=session_id)
     if not success:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    # Remove from RAG vector store
+    if settings.rag_enabled:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: rag_service.remove_session(session_id))
+
     return {"status": "success"}
+
+
+# =====================================================
+# RAG ENDPOINTS
+# =====================================================
+
+@app.get("/api/rag/status")
+async def rag_status(current_user=Depends(require_roles(*ALL_ROLES))):
+    """Return RAG vector store statistics."""
+    return rag_service.get_index_stats()
+
+
+@app.post("/api/rag/index")
+async def rag_reindex(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_roles(UserRole.ADMIN)),
+):
+    """
+    Rebuild the RAG index from all sessions currently in the database.
+
+    Useful after enabling RAG on an existing deployment or after a
+    bulk import.  Admin only.
+    """
+    if not settings.rag_enabled:
+        raise HTTPException(status_code=400, detail="RAG is disabled (set RAG_ENABLED=true)")
+
+    sessions = await crud.get_sessions(db=db, skip=0, limit=10000)
+
+    indexed = 0
+    errors = 0
+    loop = asyncio.get_event_loop()
+
+    for session in sessions:
+        # Decrypt if stored encrypted
+        fields = {}
+        for field in ("transcript", "chief_complaint", "soap_subjective",
+                      "soap_objective", "soap_assessment", "soap_plan"):
+            val = getattr(session, field, None)
+            if val and getattr(session, "is_encrypted", False) and settings.encryption_at_rest_enabled:
+                try:
+                    val = decrypt_data(val)
+                except Exception:
+                    pass
+            fields[field] = val
+
+        if not fields.get("transcript"):
+            continue
+
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda s=session, f=fields: rag_service.index_session(
+                    session_id=s.id,
+                    transcript=f["transcript"],
+                    chief_complaint=f["chief_complaint"],
+                    soap_subjective=f["soap_subjective"],
+                    soap_objective=f["soap_objective"],
+                    soap_assessment=f["soap_assessment"],
+                    soap_plan=f["soap_plan"],
+                ),
+            )
+            indexed += 1
+        except Exception as exc:
+            logger.warning(f"RAG reindex: failed for session {session.id}: {exc}")
+            errors += 1
+
+    stats = rag_service.get_index_stats()
+    return {
+        "indexed": indexed,
+        "errors": errors,
+        "total_in_store": stats.get("indexed_sessions", 0),
+    }
 
 
 # Root endpoint - serve index.html
