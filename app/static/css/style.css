@@ -550,9 +550,8 @@ body .action-card {
 .view-container {
     flex: 1;
     min-height: 0;
-    display: flex;
-    flex-direction: column;
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 /* Header */
