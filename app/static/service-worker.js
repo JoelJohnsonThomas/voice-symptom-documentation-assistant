@@ -1,4 +1,4 @@
-const CACHE_NAME = 'voxdoc-cache-v4';
+const CACHE_NAME = 'voxdoc-cache-v6';
 const ASSETS_TO_CACHE = [
     '/',
     '/static/index.html',

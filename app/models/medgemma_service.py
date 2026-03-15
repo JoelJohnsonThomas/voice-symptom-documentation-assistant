@@ -778,11 +778,98 @@ class MedGemmaService:
                 "Do you have any relevant medical history or are you taking any medications for this?",
             ]
 
-        # Generic clinical fallback
+        if has("swelling", "swollen", "swelled", "puffed", "puffy"):
+            return [
+                "Where exactly is the swelling, and when did you first notice it?",
+                "Did the swelling start after an injury, or did it come on by itself?",
+                "Is the swollen area red, warm, or painful to the touch?",
+            ]
+
+        if has("burn", "burning", "urination", "urine", "pee", "peeing", "uti"):
+            return [
+                "How often are you needing to urinate, and do you feel an urgent need to go?",
+                "Have you noticed any blood in your urine, or does it look cloudy or smell unusual?",
+                "Do you have any fever, lower back pain, or chills along with this?",
+            ]
+
+        if has("tired", "fatigue", "exhausted", "weak", "no energy", "low energy", "sleepy"):
+            return [
+                "How long have you been feeling this way, and did it start suddenly or gradually?",
+                "Have you noticed any changes in your weight, appetite, or sleep patterns recently?",
+                "Are you also experiencing any shortness of breath, dizziness, or unusually heavy periods?",
+            ]
+
+        if has("anxiety", "anxious", "panic", "stressed", "nervous", "worry", "worried"):
+            return [
+                "How long have you been feeling this way, and can you describe what the anxiety feels like for you?",
+                "Have you experienced any heart racing, difficulty breathing, or trouble sleeping?",
+                "Is there anything specific that triggers these feelings, or do they seem to come on without a clear reason?",
+            ]
+
+        if has("eye", "vision", "blurry", "blind", "seeing"):
+            return [
+                "Is the problem in one eye or both, and when did it start?",
+                "Are you also experiencing any eye pain, redness, discharge, or sensitivity to light?",
+                "Have you had any recent injury to your eye or face, or do you wear contact lenses?",
+            ]
+
+        if has("ear", "hearing", "deaf", "earache", "ear pain", "ringing"):
+            return [
+                "Is the problem in one ear or both, and when did it first start?",
+                "Do you have any discharge from the ear, fever, or dizziness along with this?",
+                "Have you been swimming recently, had a cold, or been exposed to very loud noise?",
+            ]
+
+        if has("throat", "sore throat", "swallow", "tonsil", "hoarse", "voice"):
+            return [
+                "How long have you had the sore throat, and is it getting worse or staying the same?",
+                "Do you also have a fever, swollen glands in your neck, or a rash anywhere on your body?",
+                "Are you having any difficulty swallowing liquids, or does it feel like something is stuck in your throat?",
+            ]
+
+        if has("joint", "knee", "elbow", "wrist", "ankle", "hip", "shoulder", "arthritis"):
+            return [
+                "Which joint is affected, and did this start after an injury or come on by itself?",
+                "Is the joint swollen, red, or warm to the touch?",
+                "Does the stiffness or pain change throughout the day — for example, is it worse in the morning?",
+            ]
+
+        if has("bleed", "bleeding", "blood", "cut", "wound"):
+            return [
+                "Where is the bleeding coming from, and how long has it been going on?",
+                "Are you taking any blood-thinning medications such as aspirin or warfarin?",
+                "How much blood have you lost — for example, are you soaking through bandages or pads?",
+            ]
+
+        if has("numb", "numbness", "tingling", "pins and needles"):
+            return [
+                "Where exactly are you feeling the numbness or tingling, and when did it start?",
+                "Is it constant or does it come and go — and is it on one side of your body or both?",
+                "Do you have any weakness in the affected area, or any difficulty with speech or balance?",
+            ]
+
+        if has("skin", "itch", "bump", "lump", "mole", "spot", "lesion"):
+            return [
+                "Where on your body is it, and when did you first notice it?",
+                "Has it changed in size, shape, or colour since you first noticed it?",
+                "Is it painful, itchy, or bleeding — and do you have any similar spots elsewhere?",
+            ]
+
+        if has("sleep", "insomnia", "can't sleep", "waking up", "snoring"):
+            return [
+                "How long have you been having trouble sleeping, and what specifically happens — difficulty falling asleep, staying asleep, or waking too early?",
+                "Do you snore, gasp, or stop breathing during sleep (has anyone told you)?",
+                "Are you consuming caffeine, alcohol, or using screens close to bedtime?",
+            ]
+
+        # Transcript-aware generic fallback — reference what the patient said
+        # Extract first few words of the transcript for context
+        words = transcript.strip().split()
+        symptom_summary = " ".join(words[:12]) + ("..." if len(words) > 12 else "")
         return [
-            "How old are you, and do you have any significant medical conditions or take any regular medications?",
-            "On a scale of 1 to 10, how severe are your symptoms right now — and are they getting better, worse, or staying the same?",
-            "Is there anything that makes your symptoms better or worse, such as movement, eating, or rest?",
+            f"You mentioned \"{symptom_summary}\" — how long have you been experiencing this, and is it getting better, worse, or staying the same?",
+            "On a scale of 1 to 10, how would you rate the severity of your symptoms right now?",
+            "Do you have any other medical conditions, allergies, or medications you are currently taking?",
         ]
 
     def generate_documentation(self, transcript: str, image_findings: Optional[str] = None, detected_language: str = "en", similar_cases: Optional[List[Dict[str, Any]]] = None, followup_qa: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:

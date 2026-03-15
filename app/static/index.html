@@ -7,7 +7,7 @@
     <meta name="description" content="VoxDoc - AI-Powered Voice Symptom Intake & Documentation Assistant">
     <meta name="theme-color" content="#0f111a">
     <title>VoxDoc | Voice Symptom Intake</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=4">
+    <link rel="stylesheet" href="/static/css/style.css?v=5">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -502,6 +502,31 @@
                                             microphone</span>
                                     </div>
                                     <div class="live-cursor" aria-hidden="true"></div>
+                                </div>
+
+                                <!-- Follow-up Questions State -->
+                                <div id="followupState" class="followup-state hidden">
+                                    <div class="followup-header">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22">
+                                            <circle cx="12" cy="12" r="10"/>
+                                            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+                                            <line x1="12" y1="17" x2="12.01" y2="17"/>
+                                        </svg>
+                                        <h4>Follow-up Questions</h4>
+                                        <p class="followup-subtitle">Please answer these to improve documentation accuracy</p>
+                                    </div>
+                                    <div id="followupQuestions" class="followup-questions"></div>
+                                    <div class="followup-actions">
+                                        <button id="followupSubmitBtn" class="submit-btn">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <polyline points="20 6 9 17 4 12"/>
+                                            </svg>
+                                            <span>Submit Answers & Generate Documentation</span>
+                                        </button>
+                                        <button id="followupSkipBtn" class="followup-skip-btn">
+                                            Skip — Generate Without Answers
+                                        </button>
+                                    </div>
                                 </div>
 
                                 <!-- Loading State -->
@@ -1416,7 +1441,7 @@
         </div>
     </div>
 
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/app.js?v=6"></script>
 </body>
 
 </html>

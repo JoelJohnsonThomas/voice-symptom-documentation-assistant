@@ -46,6 +46,8 @@ Think like an experienced triage nurse. Prioritise missing information in this o
 
 Rules:
 - Ask ONLY about information the patient has NOT already mentioned
+- Each question MUST directly reference the patient's specific symptoms — e.g. if they say "sore throat for two days", ask "Along with the sore throat, have you noticed any fever or swollen glands?" rather than a generic "Do you have any other symptoms?"
+- NEVER ask generic health screening questions — every question must be clearly linked to what this patient described
 - Use simple, caring, patient-friendly language — no medical jargon
 - Each question must be a single clear question
 - Generate EXACTLY 2 or 3 questions — never fewer, never more{language_rule}

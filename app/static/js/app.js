@@ -42,6 +42,10 @@ const elements = {
     transcriptTitle: document.getElementById('transcriptTitle'),
     liveIndicator: document.getElementById('liveIndicator'),
     emptyState: document.getElementById('emptyState'),
+    followupState: document.getElementById('followupState'),
+    followupQuestions: document.getElementById('followupQuestions'),
+    followupSubmitBtn: document.getElementById('followupSubmitBtn'),
+    followupSkipBtn: document.getElementById('followupSkipBtn'),
     loadingState: document.getElementById('loadingState'),
     resultsContainer: document.getElementById('resultsContainer'),
 
@@ -1478,6 +1482,21 @@ function updateSubmitButton() {
 // =====================================================
 function setupSubmit() {
     elements.submitBtn?.addEventListener('click', processInput);
+
+    // Follow-up questions: submit answers
+    elements.followupSubmitBtn?.addEventListener('click', async () => {
+        const qa = collectFollowupAnswers();
+        const payload = { ...state.pendingDocPayload };
+        if (qa.length > 0) {
+            payload.followup_qa = qa;
+        }
+        await generateDocumentation(payload, state.pendingHasAudio);
+    });
+
+    // Follow-up questions: skip
+    elements.followupSkipBtn?.addEventListener('click', async () => {
+        await generateDocumentation(state.pendingDocPayload, state.pendingHasAudio);
+    });
 }
 
 async function processInput() {
@@ -1534,7 +1553,7 @@ async function processInput() {
         if (hasLiveTranscript && state.streamingMode) {
             documentPayload = { transcript: state.liveTranscript };
         } else if (hasAudio && !state.streamingMode) {
-            // Special handling for legacy audio
+            // Transcribe audio first via voice-intake
             const formData = new FormData();
             formData.append('audio', state.audioBlob, 'recording.webm');
 
@@ -1550,19 +1569,7 @@ async function processInput() {
                 }
 
                 const data = await response.json();
-
-                // If we also had image findings, we need to run another generation pass
-                // since /api/voice-intake doesn't accept image_findings directly yet
-                if (imageFindingsData) {
-                    documentPayload = {
-                        transcript: data.transcript,
-                        image_findings: imageFindingsData.visual_findings_text
-                    };
-                } else {
-                    state.currentDocumentation = data;
-                    displayResults(data);
-                    return;
-                }
+                documentPayload = { transcript: data.transcript };
             } catch (error) {
                 console.error('Audio processing error:', error);
                 if (state.isOffline || error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
@@ -1570,14 +1577,15 @@ async function processInput() {
                     showError('You are offline. Audio saved locally and will sync when reconnected.');
                     return;
                 } else {
-                    throw error; // Re-throw if not an offline error
+                    throw error;
                 }
             }
         } else if (textContent) {
             documentPayload = { transcript: textContent };
         } else if (hasImage) {
-            // Case where ONLY an image is provided
-            documentPayload = { transcript: "Patient uploaded an image only." };
+            // Image-only: use image findings as the transcript context
+            const findingsText = imageFindingsData?.visual_findings_text || '';
+            documentPayload = { transcript: `Patient uploaded a medical image. Visual findings: ${findingsText}` };
         }
 
         // Add image findings to the document payload if available
@@ -1585,53 +1593,40 @@ async function processInput() {
             documentPayload.image_findings = imageFindingsData.visual_findings_text;
         }
 
-        // 3. Generate documentation
+        // 3. Ask follow-up questions before generating documentation
         if (Object.keys(documentPayload).length > 0) {
+            // Store payload for later use by follow-up handlers
+            state.pendingDocPayload = documentPayload;
+            state.pendingHasAudio = hasAudio;
+
+            // Build transcript context for follow-up questions
+            // Include image findings so questions are relevant to visual findings too
+            let followupTranscript = documentPayload.transcript;
+            if (imageFindingsData?.visual_findings_text && !followupTranscript.includes(imageFindingsData.visual_findings_text)) {
+                followupTranscript += ` Visual findings from uploaded image: ${imageFindingsData.visual_findings_text}`;
+            }
+
             try {
-                response = await apiFetch('/api/document', {
+                const fqResponse = await apiFetch('/api/intake/questions', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(documentPayload)
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ transcript: followupTranscript })
                 });
 
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(`Documentation generation failed: ${ errorData.detail || 'Unknown error' } `);
-                }
-
-                let data = await response.json();
-
-                // Normalize response format depending on input source
-                data.transcript = documentPayload.transcript;
-                data.duration_seconds = state.recordingStartTime && hasAudio
-                    ? (Date.now() - state.recordingStartTime) / 1000
-                    : 0;
-
-                state.currentDocumentation = data;
-                displayResults(data);
-            } catch (error) {
-                console.error('Documentation generation error:', error);
-                if (state.isOffline || error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-                    // If textContent was the primary input, save it
-                    if (textContent && !hasAudio && !hasLiveTranscript) {
-                        await saveToOfflineQueue('text', { text: textContent });
-                        showError('You are offline. Text input saved locally and will sync when reconnected.');
-                        return;
-                    } else if (hasLiveTranscript && !hasAudio && !textContent) {
-                        await saveToOfflineQueue('text', { text: state.liveTranscript });
-                        showError('You are offline. Live transcript saved locally and will sync when reconnected.');
-                        return;
+                if (fqResponse.ok) {
+                    const fqData = await fqResponse.json();
+                    if (fqData.questions && fqData.questions.length > 0) {
+                        renderFollowupQuestions(fqData.questions);
+                        showFollowup();
+                        return; // Wait for user to submit or skip
                     }
-                    // If audio was processed successfully but doc generation failed, it's more complex.
-                    // For now, just show error.
-                    showError('You are offline. Could not generate documentation. Please try again when online.');
-                    return;
-                } else {
-                    throw error; // Re-throw if not an offline error
                 }
+            } catch (err) {
+                console.warn('Follow-up questions unavailable, proceeding directly:', err.message);
             }
+
+            // If follow-up questions failed or returned none, generate directly
+            await generateDocumentation(documentPayload, hasAudio);
         }
 
     } catch (error) {
@@ -1647,13 +1642,75 @@ async function processInput() {
     }
 }
 
+function renderFollowupQuestions(questions) {
+    if (!elements.followupQuestions) return;
+    elements.followupQuestions.innerHTML = questions.map((q, i) => `
+        <div class="followup-question-item">
+            <label for="followupAnswer${i}">${i + 1}. ${q}</label>
+            <textarea id="followupAnswer${i}" rows="2" placeholder="Type your answer..."></textarea>
+        </div>
+    `).join('');
+}
+
+function collectFollowupAnswers() {
+    const items = elements.followupQuestions?.querySelectorAll('.followup-question-item') || [];
+    const qa = [];
+    items.forEach((item, i) => {
+        const question = item.querySelector('label')?.textContent?.replace(/^\d+\.\s*/, '') || '';
+        const answer = item.querySelector('textarea')?.value?.trim() || '';
+        if (question) {
+            qa.push({ question, answer });
+        }
+    });
+    return qa;
+}
+
+async function generateDocumentation(payload, hasAudio) {
+    showLoading();
+    try {
+        const response = await apiFetch('/api/document', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(`Documentation generation failed: ${errorData.detail || 'Unknown error'}`);
+        }
+
+        let data = await response.json();
+
+        data.transcript = payload.transcript;
+        data.duration_seconds = state.recordingStartTime && hasAudio
+            ? (Date.now() - state.recordingStartTime) / 1000
+            : 0;
+
+        state.currentDocumentation = data;
+        displayResults(data);
+    } catch (error) {
+        console.error('Documentation generation error:', error);
+        if (state.isOffline || error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+            showError('You are offline. Could not generate documentation. Please try again when online.');
+        } else {
+            showError(error.message);
+        }
+    }
+}
+
 // =====================================================
 // UI STATE MANAGEMENT
 // =====================================================
-function showLoading() {
+function hideAllStates() {
     elements.emptyState?.classList.add('hidden');
     elements.resultsContainer?.classList.add('hidden');
     elements.liveTranscriptState?.classList.add('hidden');
+    elements.loadingState?.classList.add('hidden');
+    elements.followupState?.classList.add('hidden');
+}
+
+function showLoading() {
+    hideAllStates();
     elements.loadingState?.classList.remove('hidden');
     elements.transcriptTitle.textContent = 'Processing...';
     const msgEl = document.getElementById('loadingMessage');
@@ -1661,18 +1718,22 @@ function showLoading() {
     startQueuePolling();
 }
 
+function showFollowup() {
+    hideAllStates();
+    elements.followupState?.classList.remove('hidden');
+    elements.transcriptTitle.textContent = 'Follow-up Questions';
+    hideQueueStatus();
+}
+
 function showResults() {
-    elements.emptyState?.classList.add('hidden');
-    elements.loadingState?.classList.add('hidden');
-    elements.liveTranscriptState?.classList.add('hidden');
+    hideAllStates();
     elements.resultsContainer?.classList.remove('hidden');
     elements.transcriptTitle.textContent = 'Documentation Results';
     hideQueueStatus();
 }
 
 function showError(message) {
-    elements.loadingState?.classList.add('hidden');
-    elements.liveTranscriptState?.classList.add('hidden');
+    hideAllStates();
     elements.transcriptTitle.textContent = 'Error';
     hideQueueStatus();
 
