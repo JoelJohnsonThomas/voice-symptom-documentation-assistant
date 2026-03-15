@@ -76,7 +76,7 @@ from app.data_retention import (
     start_purge_scheduler,
     stop_purge_scheduler,
 )
-from app.auth import SYSTEM_USER
+from app.auth import SYSTEM_USER, UserRole, require_roles, ALL_ROLES, INTAKE_AND_UP_ROLES
 from app.models.medasr_service import get_medasr_service
 from app.models.medgemma_service import get_medgemma_service
 from app.models.ner_service import get_ner_service
