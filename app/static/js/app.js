@@ -1678,9 +1678,9 @@ function showError(message) {
 
     // Create error display
     const errorHtml = `
-        < div style = "padding: 20px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 12px; color: #dc2626;" >
-            <strong>Error:</strong> ${ message }
-        </div >
+        <div style="padding: 20px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 12px; color: #dc2626;">
+            <strong>Error:</strong> ${message}
+        </div>
         `;
 
     if (elements.resultsContainer) {
@@ -1754,7 +1754,7 @@ function displayResults(data) {
             const reader = new FileReader();
             reader.onload = (e) => {
                 elements.imageFindingsThumbnailContainer.innerHTML = `
-        < img src = "${e.target.result}" class="findings-thumbnail" alt = "Uploaded finding" >
+        <img src="${e.target.result}" class="findings-thumbnail" alt="Uploaded finding">
             <div class="findings-meta">
                 <strong>Uploaded Document</strong>
                 <span>Body Area: ${state.imageAnalysis.body_area || 'Not specified'}</span><br>
@@ -1951,10 +1951,10 @@ function displayNEREntities(entities) {
     if (elements.nerConditionBadges) {
         if (entities.conditions && entities.conditions.length > 0) {
             elements.nerConditionBadges.innerHTML = entities.conditions.map(ent =>
-                `< span class="entity-badge entity-condition" title = "${ent.system}: ${ent.code}" >
+                `<span class="entity-badge entity-condition" title="${ent.system}: ${ent.code}">
                     <span class="entity-name">${escapeHTML(ent.text)}</span>
                     <span class="entity-code">${ent.system}: ${ent.code}</span>
-                </span > `
+                </span>`
             ).join('');
             document.getElementById('nerConditions')?.classList.remove('hidden');
         } else {
@@ -1966,10 +1966,10 @@ function displayNEREntities(entities) {
     if (elements.nerMedicationBadges) {
         if (entities.medications && entities.medications.length > 0) {
             elements.nerMedicationBadges.innerHTML = entities.medications.map(ent =>
-                `< span class="entity-badge entity-medication" title = "${ent.system}: ${ent.code}" >
+                `<span class="entity-badge entity-medication" title="${ent.system}: ${ent.code}">
                     <span class="entity-name">${escapeHTML(ent.text)}</span>
                     <span class="entity-code">${ent.system}: ${ent.code}</span>
-                </span > `
+                </span>`
             ).join('');
             document.getElementById('nerMedications')?.classList.remove('hidden');
         } else {
@@ -2050,9 +2050,9 @@ ${ soapP }
         // Visual feedback
         const originalSvg = elements.copyBtn.innerHTML;
         elements.copyBtn.innerHTML = `
-        < svg viewBox = "0 0 24 24" fill = "none" stroke = "currentColor" stroke - width="2" >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="20 6 9 17 4 12" />
-            </svg >
+        </svg>
         `;
         elements.copyBtn.style.color = '#10b981';
 
@@ -2181,10 +2181,10 @@ async function pushToEHR() {
     } finally {
         elements.ehrModalSubmit.disabled = false;
         elements.ehrModalSubmit.innerHTML = `
-        < svg viewBox = "0 0 24 24" fill = "none" stroke = "currentColor" stroke - width="2" width = "14" height = "14" aria - hidden="true" >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" aria-hidden="true">
                 <polyline points="16 6 12 2 8 6" />
                 <line x1="12" y1="2" x2="12" y2="15" />
-            </svg >
+        </svg>
         Push Bundle
         `;
     }
@@ -2496,13 +2496,13 @@ function renderSOAPHistory(section) {
     // Build original AI text block
     const isSymptomDetails = section === 'clinical_details';
     const originalBlock = data.originalText
-        ? `< div class="soap-history-original" >
+        ? `<div class="soap-history-original">
         <div style="display: flex; align-items: center; margin-bottom: 4px;">
             <div class="soap-history-original-label">Original AI Output</div>
             <button class="soap-history-restore-btn" onclick="restoreOriginalSOAP('${section}')">Restore</button>
         </div>
-               ${ isSymptomDetails ? data.originalText : escapeHTML(data.originalText) }
-           </div > `
+               ${isSymptomDetails ? data.originalText : escapeHTML(data.originalText)}
+           </div>`
         : '';
 
     // Build timeline
@@ -2519,13 +2519,13 @@ function renderSOAPHistory(section) {
                 const plainText = e.text.replace(/<[^>]*>?/gm, ''); // Strip HTML for list items in history
                 detail = ` — ${ escapeHTML(truncate(plainText, 120)) } `;
             }
-            return `< li class="soap-history-entry" >
+            return `<li class="soap-history-entry">
                         <span class="soap-history-dot ${dotClass}"></span>
                         <span class="soap-history-time">${time}</span>
                         <span class="soap-history-action"><strong>${actionLabel}</strong>${detail}</span>
-                    </li > `;
+                    </li>`;
         }).join('');
-        timeline = `< ul class="soap-history-timeline" > ${ items }</ul > `;
+        timeline = `<ul class="soap-history-timeline">${items}</ul>`;
     }
 
     historyEl.innerHTML = originalBlock + timeline;
@@ -2719,7 +2719,7 @@ function updateRecentDocsUI() {
     if (!listEl) return;
 
     if (state.sessionHistory.length === 0) {
-        listEl.innerHTML = `< div class="recent-doc-item" style = "color: var(--text-muted); font-style: italic; font-size: 0.8rem; justify-content: center; border: none;" > No recent sessions</div > `;
+        listEl.innerHTML = `<div class="recent-doc-item" style="color: var(--text-muted); font-style: italic; font-size: 0.8rem; justify-content: center; border: none;">No recent sessions</div>`;
         return;
     }
 
@@ -2730,7 +2730,7 @@ function updateRecentDocsUI() {
         const displayTime = date.toDateString() === new Date().toDateString() ? `Today, ${ timeStr } ` : `${ dateStr }, ${ timeStr } `;
 
         return `
-        < div class="recent-doc-item" data - id="${session.id}" role = "button" tabindex = "0" onclick = "loadSessionIntoDashboard('${session.id}')" onkeydown = "if(event.key==='Enter'||event.key===' ') { event.preventDefault(); loadSessionIntoDashboard('${session.id}'); }" >
+        <div class="recent-doc-item" data-id="${session.id}" role="button" tabindex="0" onclick="loadSessionIntoDashboard('${session.id}')" onkeydown="if(event.key==='Enter'||event.key===' ') { event.preventDefault(); loadSessionIntoDashboard('${session.id}'); }">
             <div class="doc-icon">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -2744,7 +2744,7 @@ function updateRecentDocsUI() {
                 <div class="doc-title">${truncate(session.chiefComplaint, 25)}</div>
                 <div class="doc-date">${displayTime}</div>
             </div>
-        </div >
+        </div>
         `;
     }).join('');
 }
