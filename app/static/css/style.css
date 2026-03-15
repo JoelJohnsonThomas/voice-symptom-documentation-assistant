@@ -206,11 +206,13 @@
 html,
 body {
     height: 100%;
+    margin: 0;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     background: var(--bg-primary);
     color: var(--text-secondary);
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
+    overflow: hidden;
 }
 
 /* Global Focus Indicator for Accessibility */
@@ -248,7 +250,6 @@ body .action-card {
 .app-container {
     display: flex;
     height: 100vh;
-    overflow: hidden;
 }
 
 /* =====================================================
@@ -541,15 +542,16 @@ body .action-card {
     flex: 1;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
     position: relative;
-    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
 }
 
-/* View containers are flex items inside .main-content */
+/* View containers scroll independently below the fixed header */
 .view-container {
-    height: calc(100vh - 72px);
-    overflow-y: auto;
+    flex: 1 1 0px;
+    min-height: 0;
+    overflow-y: scroll;
     -webkit-overflow-scrolling: touch;
 }
 
