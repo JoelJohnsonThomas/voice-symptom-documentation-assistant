@@ -640,12 +640,10 @@ body .action-card {
    CONTENT GRID
    ===================================================== */
 .content-grid {
-    flex: 1;
     display: grid;
     grid-template-columns: 1fr;
     gap: 24px;
     padding: 24px;
-    overflow-y: auto;
 }
 
 @media (min-width: 1024px) {
