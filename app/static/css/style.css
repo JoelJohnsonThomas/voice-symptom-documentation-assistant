@@ -548,8 +548,7 @@ body .action-card {
 
 /* View containers are flex items inside .main-content */
 .view-container {
-    flex: 1;
-    min-height: 0;
+    height: calc(100vh - 72px);
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
 }
