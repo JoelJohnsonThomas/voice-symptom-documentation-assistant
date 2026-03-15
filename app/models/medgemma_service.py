@@ -649,7 +649,143 @@ class MedGemmaService:
         
         return True, ""
     
-    def generate_documentation(self, transcript: str, image_findings: Optional[str] = None, detected_language: str = "en", similar_cases: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    def generate_followup_questions(self, transcript: str, detected_language: str = "en") -> List[str]:
+        """
+        Generate 2-3 targeted follow-up questions for missing clinical information.
+
+        Returns:
+            List of patient-friendly question strings (2-3 items).
+            Falls back to generic questions if the model fails.
+        """
+        from app.prompts.documentation_prompts import create_followup_questions_prompt
+
+        try:
+            prompt_content = create_followup_questions_prompt(transcript, language=detected_language)
+            messages = [{"role": "user", "content": prompt_content}]
+            prompt = self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+
+            inputs = self.tokenizer(prompt, return_tensors="pt", padding=True).to(self.model.device)
+
+            with torch.inference_mode():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=256,
+                    do_sample=False,
+                    repetition_penalty=settings.medgemma_repetition_penalty,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                )
+
+            generated_ids = outputs[0][inputs.input_ids.shape[1]:]
+            decoded = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+            self._safe_log_generated_text("Follow-up questions response", decoded)
+
+            json_str = self._extract_json_from_response(decoded)
+            data = json.loads(json_str)
+            questions = data.get("questions", [])
+            if isinstance(questions, list) and 2 <= len(questions) <= 3:
+                return [str(q) for q in questions]
+
+            # If the list is longer than 3, trim; if shorter, fall through to fallback
+            if isinstance(questions, list) and len(questions) > 3:
+                return [str(q) for q in questions[:3]]
+
+        except Exception as e:
+            logger.warning(f"Follow-up question generation failed, using fallback: {e}")
+
+        return self._symptom_aware_fallback_questions(transcript)
+
+    def _symptom_aware_fallback_questions(self, transcript: str) -> List[str]:
+        """
+        Return clinically relevant follow-up questions derived from symptom keywords
+        in the transcript.  Mirrors real triage nurse prioritisation:
+        demographics → red-flag associated symptoms → severity/progression → history.
+        """
+        t = transcript.lower()
+
+        def has(*words: str) -> bool:
+            return any(w in t for w in words)
+
+        if has("fever", "temperature", "febrile", "hot", "running a temperature"):
+            return [
+                "How old are you, and have you measured your temperature? If so, what was it?",
+                "Do you have any other symptoms such as a stiff neck, rash, difficulty breathing, or sensitivity to light?",
+                "Have you taken anything for the fever (like paracetamol or ibuprofen), and did it help?",
+            ]
+
+        if has("chest pain", "chest discomfort", "chest tightness", "chest hurts", "chest pressure"):
+            return [
+                "Does the pain spread to your arm, jaw, shoulder, or back?",
+                "Are you also experiencing shortness of breath, sweating, or nausea?",
+                "Do you have a history of heart disease, high blood pressure, or diabetes?",
+            ]
+
+        if has("headache", "head pain", "migraine", "head hurts", "my head"):
+            return [
+                "Did the headache come on very suddenly (like a thunderclap), or did it build up gradually?",
+                "Are you also experiencing fever, stiff neck, sensitivity to light, or any vision changes?",
+                "On a scale of 1 to 10, how bad is the headache — and is it the worst headache you have ever had?",
+            ]
+
+        if has("shortness of breath", "short of breath", "difficulty breathing",
+               "hard to breathe", "can't breathe", "breathless"):
+            return [
+                "How old are you, and did this come on suddenly or has it been getting gradually worse?",
+                "Are you also experiencing chest pain, wheezing, or swelling in your legs or ankles?",
+                "Do you have a history of asthma, COPD, heart problems, or any recent illness?",
+            ]
+
+        if has("stomach", "abdominal", "belly", "tummy", "nausea", "vomit", "diarrhea", "bowel"):
+            return [
+                "Where exactly is the pain — upper abdomen, lower abdomen, or all over — and does it move anywhere?",
+                "Have you had any vomiting, diarrhoea, or noticed any blood in your stool or vomit?",
+                "For women: when was your last menstrual period, and is there any chance you could be pregnant?",
+            ]
+
+        if has("dizzy", "dizziness", "lightheaded", "light-headed", "faint", "passed out", "blacked out"):
+            return [
+                "How old are you, and did you actually lose consciousness, or did you just feel like you might faint?",
+                "Were you standing up when it started, and do you have a history of heart problems or low blood pressure?",
+                "Are you also experiencing palpitations, chest pain, or shortness of breath?",
+            ]
+
+        if has("back pain", "back hurts", "backache", "lower back", "upper back"):
+            return [
+                "Does the pain travel down your leg, and if so, do you have any numbness or tingling in the leg or foot?",
+                "Did the pain start after an injury or heavy lifting, or did it come on by itself?",
+                "Are you having any difficulty with bladder or bowel control?",
+            ]
+
+        if has("rash", "hives", "itchy skin", "skin rash"):
+            return [
+                "Where on your body is the rash, and when did it first appear?",
+                "Have you recently started any new medications, eaten anything unusual, or been exposed to new products or environments?",
+                "Are you also experiencing difficulty breathing, or any swelling of your face, lips, or throat?",
+            ]
+
+        if has("cough", "coughing"):
+            return [
+                "How old are you, and is the cough dry or are you bringing up mucus? If mucus, what colour is it?",
+                "Are you also experiencing fever, shortness of breath, or chest pain when you cough?",
+                "Have you been around anyone who is sick, or have you recently travelled anywhere?",
+            ]
+
+        if has("pain", "ache", "hurts", "sore", "discomfort"):
+            return [
+                "How old are you, and on a scale of 1 to 10, how would you rate the pain right now?",
+                "Is the pain constant or does it come and go — and does anything make it better or worse?",
+                "Do you have any relevant medical history or are you taking any medications for this?",
+            ]
+
+        # Generic clinical fallback
+        return [
+            "How old are you, and do you have any significant medical conditions or take any regular medications?",
+            "On a scale of 1 to 10, how severe are your symptoms right now — and are they getting better, worse, or staying the same?",
+            "Is there anything that makes your symptoms better or worse, such as movement, eating, or rest?",
+        ]
+
+    def generate_documentation(self, transcript: str, image_findings: Optional[str] = None, detected_language: str = "en", similar_cases: Optional[List[Dict[str, Any]]] = None, followup_qa: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         """
         Generate structured symptom documentation from transcript.
         
@@ -675,9 +811,9 @@ class MedGemmaService:
             # Create prompt content — use image-aware prompt if image findings available
             if image_findings:
                 logger.info("Including image findings in documentation prompt")
-                prompt_content = create_documentation_with_image_prompt(transcript, image_findings, language=detected_language)
+                prompt_content = create_documentation_with_image_prompt(transcript, image_findings, language=detected_language, followup_qa=followup_qa)
             else:
-                prompt_content = create_documentation_prompt(transcript, language=detected_language)
+                prompt_content = create_documentation_prompt(transcript, language=detected_language, followup_qa=followup_qa)
             
             # MedGemma 1.5 is a chat model - use chat template
             messages = [

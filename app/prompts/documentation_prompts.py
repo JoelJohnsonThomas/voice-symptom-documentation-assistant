@@ -6,7 +6,55 @@ These prompts are designed to extract and structure information ONLY.
 They explicitly prohibit clinical decision-making, triage, or urgency assessment.
 """
 
-def create_documentation_prompt(transcript: str, language: str = "en") -> str:
+def create_followup_questions_prompt(transcript: str, language: str = "en") -> str:
+    """
+    Generate clinically grounded follow-up questions for information missing from
+    the patient's initial statement.
+
+    Modelled on real triage nurse assessment: demographics, red-flag associated
+    symptoms, severity, progression, and relevant history.
+
+    Returns a prompt that asks MedGemma to produce a JSON object with a
+    "questions" key containing 2-3 patient-friendly follow-up questions.
+    """
+    clean_transcript = transcript.replace("</s>", "").replace("<s>", "").strip().lstrip('.')
+
+    language_rule = (
+        f"\n- Ask all questions in {language} since that is the patient's language."
+        if language != "en"
+        else ""
+    )
+
+    return f"""A patient has just described their symptoms to a triage nurse. Based ONLY on what the patient said, identify the 2-3 most clinically important pieces of information that are MISSING and would help a clinician assess the case.
+
+Patient Statement: "{clean_transcript}"
+
+Think like an experienced triage nurse. Prioritise missing information in this order:
+1. Patient demographics relevant to the complaint — age is almost always important; ask about pregnancy if relevant
+2. Objective measurements already available to the patient — e.g. temperature reading if they mention fever, pain score (1-10) if they mention pain
+3. "Red flag" associated symptoms specific to the chief complaint:
+   - Fever → chills, rash, stiff neck, difficulty breathing, recent travel
+   - Chest pain → radiation to arm/jaw/shoulder, sweating, nausea, shortness of breath
+   - Headache → sudden "thunderclap" onset, stiff neck, sensitivity to light, vision changes
+   - Shortness of breath → chest pain, wheeze, ankle swelling, history of asthma/heart disease
+   - Abdominal pain → location, vomiting, diarrhoea, blood in stool, last menstrual period
+   - Dizziness/fainting → loss of consciousness, palpitations, positional component
+   - Back pain → radiation down the leg, numbness/tingling, bladder or bowel changes
+   - Rash → new medications or foods, throat/facial swelling, fever
+4. Progression — is it getting better, worse, or staying the same?
+5. Relevant history — prior episodes, medications already tried, relevant chronic conditions
+
+Rules:
+- Ask ONLY about information the patient has NOT already mentioned
+- Use simple, caring, patient-friendly language — no medical jargon
+- Each question must be a single clear question
+- Generate EXACTLY 2 or 3 questions — never fewer, never more{language_rule}
+
+Respond ONLY with a JSON object in this exact format (no extra text, no markdown):
+{{"questions": ["Question 1?", "Question 2?", "Question 3?"]}}"""
+
+
+def create_documentation_prompt(transcript: str, language: str = "en", followup_qa: list | None = None) -> str:
     """
     Create clean, direct prompt without chat artifacts.
     Cleans transcript before formatting to remove ASR artifacts.
@@ -19,11 +67,21 @@ def create_documentation_prompt(transcript: str, language: str = "en") -> str:
     """
     # Clean the transcript first - remove ASR special tokens
     clean_transcript = transcript.replace("</s>", "").replace("<s>", "").strip().lstrip('.')
-    
+
+    # Build optional follow-up Q&A block
+    followup_block = ""
+    if followup_qa:
+        answered = [qa for qa in followup_qa if qa.get("answer", "").strip()]
+        if answered:
+            qa_lines = "\n".join(
+                f"Q: {qa['question']}\nA: {qa['answer']}" for qa in answered
+            )
+            followup_block = f"\n\nAdditional information provided by the patient:\n{qa_lines}\n"
+
     # Direct instruction asking for structured extraction + narrative SOAP
     return f"""Analyze this patient statement for medical documentation.
 
-Patient Statement: "{clean_transcript}"
+Patient Statement: "{clean_transcript}"{followup_block}
 
 Extract ONLY information the patient explicitly stated:
 
@@ -166,22 +224,33 @@ OBSERVATIONS: [detailed visual description]
 NOTABLE FEATURES: [any distinguishing characteristics]"""
 
 
-def create_documentation_with_image_prompt(transcript: str, image_description: str, language: str = "en") -> str:
+def create_documentation_with_image_prompt(transcript: str, image_description: str, language: str = "en", followup_qa: list | None = None) -> str:
     """
     Create a documentation prompt that includes both transcript and image findings.
-    
+
     Args:
         transcript: Patient's symptom report
         image_description: AI-generated description of uploaded image
-        
+        followup_qa: Optional list of {"question": ..., "answer": ...} dicts
+
     Returns:
         Formatted prompt string incorporating both text and visual data
     """
     clean_transcript = transcript.replace("</s>", "").replace("<s>", "").strip().lstrip('.')
+
+    # Build optional follow-up Q&A block
+    followup_block = ""
+    if followup_qa:
+        answered = [qa for qa in followup_qa if qa.get("answer", "").strip()]
+        if answered:
+            qa_lines = "\n".join(
+                f"Q: {qa['question']}\nA: {qa['answer']}" for qa in answered
+            )
+            followup_block = f"\n\nAdditional information provided by the patient:\n{qa_lines}\n"
     
     return f"""Analyze this patient statement AND accompanying image findings for medical documentation.
 
-Patient Statement: "{clean_transcript}"
+Patient Statement: "{clean_transcript}"{followup_block}
 
 Image Findings (from uploaded photo):
 {image_description}

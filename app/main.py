@@ -126,9 +126,15 @@ class TranscriptionResponse(BaseModel):
     detected_language: Optional[str] = "en"
 
 
+class FollowupQA(BaseModel):
+    question: str
+    answer: str = ""
+
+
 class DocumentationRequest(BaseModel):
     transcript: str
     image_findings: Optional[str] = None
+    followup_qa: Optional[List[FollowupQA]] = None
 
 
 class DocumentationResponse(BaseModel):
@@ -535,6 +541,70 @@ async def transcribe_audio(
             Path(temp_path).unlink(missing_ok=True)
 
 
+# Follow-up questions endpoint
+class IntakeQuestionsRequest(BaseModel):
+    transcript: str
+    detected_language: Optional[str] = "en"
+
+
+class IntakeQuestionsResponse(BaseModel):
+    questions: List[str]
+
+
+@app.post("/api/intake/questions", response_model=IntakeQuestionsResponse)
+async def get_intake_followup_questions(
+    request: IntakeQuestionsRequest,
+    raw_request: Request,
+    current_user=Depends(require_roles(*INTAKE_AND_UP_ROLES)),
+):
+    """
+    Generate 2-3 targeted follow-up questions for missing clinical information.
+
+    Call this after the patient's initial voice/text description to identify
+    gaps (severity, duration, location, quality, aggravating factors, etc.).
+    Submit the patient's answers back via /api/document in the followup_qa field.
+    """
+    await check_rate_limit(raw_request, tier="inference")
+
+    queue = get_inference_queue()
+    request_id = str(uuid.uuid4())
+    await queue.acquire(request_id)
+    inference_start = time.monotonic()
+
+    ACTIVE_INFERENCES.inc(model="medgemma")
+    try:
+        enforce_medgemma_terms_acknowledgement()
+
+        if not request.transcript or len(request.transcript.strip()) < 10:
+            raise HTTPException(
+                status_code=400,
+                detail="Transcript too short (minimum 10 characters required)",
+            )
+
+        medgemma = get_medgemma_service()
+        model_start = time.monotonic()
+        questions = medgemma.generate_followup_questions(
+            request.transcript,
+            detected_language=request.detected_language or "en",
+        )
+        INFERENCE_LATENCY.observe(time.monotonic() - model_start, model="medgemma")
+        INFERENCE_COUNT.inc(model="medgemma", status="success")
+
+        logger.info(f"Generated {len(questions)} follow-up questions")
+        return IntakeQuestionsResponse(questions=questions)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        INFERENCE_COUNT.inc(model="medgemma", status="error")
+        INFERENCE_ERRORS.inc(model="medgemma", error_type=type(e).__name__)
+        logger.error(f"Follow-up question generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        ACTIVE_INFERENCES.dec(model="medgemma")
+        await queue.release(duration=time.monotonic() - inference_start)
+
+
 # Documentation endpoint
 @app.post("/api/document", response_model=DocumentationResponse)
 async def generate_documentation(
@@ -579,10 +649,16 @@ async def generate_documentation(
         # Generate documentation
         medgemma = get_medgemma_service()
         model_start = time.monotonic()
+        followup_qa_dicts = (
+            [qa.model_dump() for qa in request.followup_qa]
+            if request.followup_qa
+            else None
+        )
         documentation = medgemma.generate_documentation(
             request.transcript,
             image_findings=request.image_findings,
             similar_cases=similar_cases,
+            followup_qa=followup_qa_dicts,
         )
         INFERENCE_LATENCY.observe(time.monotonic() - model_start, model="medgemma")
         INFERENCE_COUNT.inc(model="medgemma", status="success")
