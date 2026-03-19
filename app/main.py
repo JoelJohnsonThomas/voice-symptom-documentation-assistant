@@ -1309,7 +1309,7 @@ async def websocket_conversation(websocket: WebSocket):
                     logger.info(f"Conversation started: mode={conversation_mode.value}, lang={lang}")
 
                     # Send greeting
-                    greeting = dialogue_mgr.get_greeting()
+                    greeting = await dialogue_mgr.get_greeting()
                     await websocket.send_json({
                         "type": "assistant_text",
                         "text": greeting.text,

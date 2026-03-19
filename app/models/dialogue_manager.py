@@ -4,7 +4,9 @@ Dialogue Manager — State machine orchestrating the AI Voice Assistant conversa
 Manages conversation flow through states:
 GREETING → CHIEF_COMPLAINT → SYMPTOM_DETAILS → FOLLOW_UP → SUMMARY → ENDED
 
-Integrates with NER, RAG, MedGemma, and safety guardrails.
+Phase 1: Core conversational loop with NER, RAG, MedGemma integration.
+Phase 2: RAG-grounded responses, hallucination check, enhanced clinician mode,
+         full safety filtering, PHI redaction, audit logging.
 """
 
 import json
@@ -22,11 +24,15 @@ from app.models.conversation_session import (
 from app.models.safety_guardrails import (
     check_emergency,
     check_red_flags,
-    enforce_non_diagnostic,
+    full_safety_filter,
+    log_conversation_audit_event,
+    redact_conversation_transcript,
+    redact_conversation_turns,
 )
 from app.prompts.conversation_prompts import (
     ACKNOWLEDGMENT_TEMPLATES,
     CLINICIAN_SYSTEM_PROMPT,
+    CONVERSATION_RAG_SYSTEM_PROMPT,
     CONVERSATION_SOAP_PROMPT,
     CONVERSATION_SYSTEM_PROMPT,
     EMERGENCY_RESPONSE,
@@ -57,7 +63,7 @@ class DialogueManager:
         self._rag_service = None
         self._questions_asked: list[str] = []
 
-    def get_greeting(self) -> AssistantResponse:
+    async def get_greeting(self) -> AssistantResponse:
         """Generate the initial greeting message."""
         if self.session.mode == ConversationMode.CLINICIAN:
             text = GREETING_CLINICIAN
@@ -66,6 +72,13 @@ class DialogueManager:
 
         self.session.add_turn("assistant", text)
         self.session.state = ConversationState.CHIEF_COMPLAINT
+
+        # Phase 2: Audit log conversation start
+        await log_conversation_audit_event(
+            event_type="conversation_started",
+            session_id=self.session.session_id,
+            details=f"mode={self.session.mode.value}, language={self.session.language}",
+        )
 
         return AssistantResponse(
             text=text,
@@ -91,7 +104,7 @@ class DialogueManager:
         # Emergency check (all states)
         is_emergency, matched = check_emergency(user_text)
         if is_emergency:
-            return self._handle_emergency(matched)
+            return await self._handle_emergency(matched)
 
         # Check for end-of-conversation signals
         if self._is_end_signal(user_text):
@@ -122,10 +135,18 @@ class DialogueManager:
                 state=self.session.state,
             )
 
-    def _handle_emergency(self, matched_pattern: Optional[str]) -> AssistantResponse:
+    async def _handle_emergency(self, matched_pattern: Optional[str]) -> AssistantResponse:
         """Handle emergency detection — advise 911 immediately."""
         self.session.state = ConversationState.EMERGENCY_ESCALATION
         self.session.add_turn("assistant", EMERGENCY_RESPONSE)
+
+        # Phase 2: Audit log the emergency escalation
+        await log_conversation_audit_event(
+            event_type="emergency_escalation",
+            session_id=self.session.session_id,
+            details=f"Emergency pattern matched: {matched_pattern}",
+            severity="critical",
+        )
 
         return AssistantResponse(
             text=EMERGENCY_RESPONSE,
@@ -179,16 +200,21 @@ class DialogueManager:
         # Generate first follow-up question
         followup = await self._generate_followup_question()
         if followup:
+            # Phase 2: Apply safety filter to LLM output
+            followup = full_safety_filter(followup)
             text += " " + followup
 
         self.session.add_turn("assistant", text)
+
+        has_rag = (self.session.rag_context is not None
+                   and self.session.rag_context.get("has_context", False))
 
         return AssistantResponse(
             text=text,
             state=ConversationState.FOLLOW_UP,
             previous_state=prev_state,
             entities_update=entities,
-            rag_grounded=self.session.rag_context is not None,
+            rag_grounded=has_rag,
         )
 
     async def _handle_follow_up(self, user_text: str) -> AssistantResponse:
@@ -203,10 +229,12 @@ class DialogueManager:
         if self.session.followup_round >= max_rounds:
             return await self._handle_summary()
 
-        # Generate next follow-up question
+        # Generate next follow-up question (Phase 2: RAG-grounded)
         text = random.choice(ACKNOWLEDGMENT_TEMPLATES)
         followup = await self._generate_followup_question()
         if followup:
+            # Phase 2: Apply safety filter to LLM-generated text
+            followup = full_safety_filter(followup)
             text += " " + followup
         else:
             # No more questions to ask — summarize
@@ -214,11 +242,14 @@ class DialogueManager:
 
         self.session.add_turn("assistant", text)
 
+        has_rag = (self.session.rag_context is not None
+                   and self.session.rag_context.get("has_context", False))
+
         return AssistantResponse(
             text=text,
             state=ConversationState.FOLLOW_UP,
             entities_update=entities,
-            rag_grounded=self.session.rag_context is not None,
+            rag_grounded=has_rag,
         )
 
     async def _handle_summary(self) -> AssistantResponse:
@@ -231,13 +262,38 @@ class DialogueManager:
 
         # Check for red flags
         red_flags = check_red_flags(self.session.accumulated_transcript)
-
         if red_flags:
             documentation["red_flags"] = red_flags
+            # Phase 2: Audit log red flags
+            await log_conversation_audit_event(
+                event_type="red_flag_detected",
+                session_id=self.session.session_id,
+                details=f"Red flags: {', '.join(red_flags)}",
+                severity="warning",
+            )
+
+        # Phase 2: Run hallucination check on generated SOAP
+        hallucination_result = await self._run_hallucination_check(documentation)
+        if hallucination_result:
+            documentation["hallucination_check"] = hallucination_result
+
+        # Phase 2: Enrich with ICD-10 codes and drug interactions
+        enrichment = await self._enrich_documentation()
+        if enrichment.get("icd10_suggestions"):
+            documentation["icd10_suggestions"] = enrichment["icd10_suggestions"]
+        if enrichment.get("drug_interactions"):
+            documentation["drug_interactions"] = enrichment["drug_interactions"]
 
         text = SUMMARY_INTRO
         self.session.add_turn("assistant", text)
         self.session.state = ConversationState.ENDED
+
+        # Phase 2: Audit log conversation end
+        await log_conversation_audit_event(
+            event_type="conversation_ended",
+            session_id=self.session.session_id,
+            details=f"turns={len(self.session.turns)}, red_flags={len(red_flags)}",
+        )
 
         return AssistantResponse(
             text=text,
@@ -248,19 +304,29 @@ class DialogueManager:
         )
 
     async def _handle_clinician_query(self, user_text: str) -> AssistantResponse:
-        """Handle clinician hands-free queries."""
+        """Handle clinician hands-free queries with intent classification."""
         text_lower = user_text.lower()
 
-        # Intent classification via keyword matching
-        if any(kw in text_lower for kw in ["drug interaction", "interaction between", "interact with"]):
+        # Phase 2: Enhanced intent classification with broader keyword coverage
+        intent = self._classify_clinician_intent(text_lower)
+
+        if intent == "drug_interaction":
             result = await self._query_drug_interactions(user_text)
-        elif any(kw in text_lower for kw in ["icd-10", "icd10", "icd code", "diagnosis code"]):
+        elif intent == "icd10":
             result = await self._query_icd10(user_text)
-        elif any(kw in text_lower for kw in ["similar case", "similar patient", "past case"]):
+        elif intent == "similar_cases":
             result = await self._query_similar_cases(user_text)
+        elif intent == "guidelines":
+            result = await self._query_guidelines(user_text)
         else:
-            result = ("I can help with drug interactions, ICD-10 lookups, "
-                      "and similar case searches. What would you like to know?")
+            result = (
+                "I can help with:\n"
+                "- Drug interactions (e.g., 'check interactions between metformin and lisinopril')\n"
+                "- ICD-10 codes (e.g., 'ICD-10 for persistent cough')\n"
+                "- Similar cases (e.g., 'find similar cases to chest pain with dyspnea')\n"
+                "- Clinical guidelines (e.g., 'guidelines for hypertension management')\n"
+                "What would you like to know?"
+            )
 
         self.session.add_turn("assistant", result)
 
@@ -268,6 +334,42 @@ class DialogueManager:
             text=result,
             state=self.session.state,
         )
+
+    @staticmethod
+    def _classify_clinician_intent(text_lower: str) -> str:
+        """Classify clinician query intent via keyword matching."""
+        drug_keywords = [
+            "drug interaction", "interaction between", "interact with",
+            "contraindic", "drug-drug", "medication interaction",
+            "safe to combine", "combine with", "taken together",
+        ]
+        icd_keywords = [
+            "icd-10", "icd10", "icd code", "diagnosis code",
+            "billing code", "code for", "classification code",
+        ]
+        case_keywords = [
+            "similar case", "similar patient", "past case",
+            "previous patient", "case like", "seen before",
+        ]
+        guideline_keywords = [
+            "guideline", "protocol", "standard of care",
+            "best practice", "recommendation for", "management of",
+        ]
+
+        for kw in drug_keywords:
+            if kw in text_lower:
+                return "drug_interaction"
+        for kw in icd_keywords:
+            if kw in text_lower:
+                return "icd10"
+        for kw in case_keywords:
+            if kw in text_lower:
+                return "similar_cases"
+        for kw in guideline_keywords:
+            if kw in text_lower:
+                return "guidelines"
+
+        return "unknown"
 
     # =====================================================
     # Service integration helpers
@@ -453,9 +555,13 @@ class DialogueManager:
             if conditions:
                 results = []
                 for condition in conditions[:3]:
-                    codes = icd10_service.lookup_codes(condition)
+                    codes = icd10_service.lookup_icd10_codes(condition)
                     if codes:
-                        results.append(f"{condition}: {codes}")
+                        formatted = ", ".join(
+                            f"{c.get('code', '?')} ({c.get('description', '?')}, score={c.get('score', 0):.2f})"
+                            for c in codes[:3]
+                        )
+                        results.append(f"{condition}: {formatted}")
                 if results:
                     return "ICD-10 suggestions:\n" + "\n".join(results)
             return "Could you specify the condition you'd like ICD-10 codes for?"
@@ -467,13 +573,102 @@ class DialogueManager:
         """Query RAG for similar cases in clinician mode."""
         try:
             from app.models import rag_service
-            results = await rag_service.retrieve_similar_sessions(query)
+            results = rag_service.retrieve_similar_sessions(query)
             if results:
-                return f"Found {len(results)} similar cases. " + json.dumps(results[:3], indent=2)
+                summaries = []
+                for i, case in enumerate(results[:3], 1):
+                    doc = case.get("document", "")[:200]
+                    score = case.get("score", 0)
+                    summaries.append(f"  {i}. (similarity={score:.2f}) {doc}...")
+                return f"Found {len(results)} similar cases:\n" + "\n".join(summaries)
             return "No similar cases found in the knowledge base."
         except Exception as e:
             logger.error(f"Similar case query failed: {e}")
             return "I wasn't able to search for similar cases at this time."
+
+    async def _query_guidelines(self, query: str) -> str:
+        """Query knowledge base for clinical guidelines (Phase 2)."""
+        try:
+            from app.models.knowledge_base_service import retrieve_guidelines
+            results = retrieve_guidelines(query)
+            if results:
+                summaries = []
+                for i, g in enumerate(results[:3], 1):
+                    doc = g.get("document", "")[:300]
+                    score = g.get("score", 0)
+                    summaries.append(f"  {i}. (relevance={score:.2f}) {doc}...")
+                return f"Found {len(results)} relevant guidelines:\n" + "\n".join(summaries)
+            return "No matching clinical guidelines found."
+        except Exception as e:
+            logger.error(f"Guidelines query failed: {e}")
+            return "I wasn't able to search clinical guidelines at this time."
+
+    # =====================================================
+    # Phase 2: Hallucination Check & Documentation Enrichment
+    # =====================================================
+
+    async def _run_hallucination_check(self, documentation: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Run hallucination check on generated SOAP using RAG evidence."""
+        if not settings.rag_hallucination_check_enabled:
+            return None
+
+        if not self.session.rag_context:
+            return None
+
+        try:
+            from app.models import rag_evaluation_service
+            result = rag_evaluation_service.check_documentation_hallucination(
+                documentation=documentation,
+                similar_cases=self.session.rag_context.get("similar_sessions", []),
+                clinical_guidelines=self.session.rag_context.get("clinical_guidelines", []),
+                transcript=self.session.accumulated_transcript,
+            )
+            return result
+        except Exception as e:
+            logger.warning(f"Hallucination check failed: {e}")
+            return None
+
+    async def _enrich_documentation(self) -> Dict[str, Any]:
+        """Enrich documentation with ICD-10 codes and drug interaction checks."""
+        enrichment: Dict[str, Any] = {}
+
+        # ICD-10 enrichment from extracted conditions
+        if settings.icd10_lookup_enabled:
+            try:
+                from app.models import icd10_service
+                conditions = [
+                    e.get("text", e.get("name", ""))
+                    for e in self.session.extracted_entities.get("conditions", [])
+                ]
+                all_codes = []
+                for condition in conditions[:5]:
+                    codes = icd10_service.lookup_icd10_codes(condition)
+                    if codes:
+                        all_codes.append({
+                            "symptom": condition,
+                            "codes": codes[:3],
+                        })
+                if all_codes:
+                    enrichment["icd10_suggestions"] = all_codes
+            except Exception as e:
+                logger.warning(f"ICD-10 enrichment failed: {e}")
+
+        # Drug interaction enrichment from extracted medications
+        if settings.drug_interaction_check_enabled:
+            try:
+                from app.models import drug_interaction_service
+                medications = [
+                    e.get("text", e.get("name", ""))
+                    for e in self.session.extracted_entities.get("medications", [])
+                ]
+                if len(medications) >= 2:
+                    interactions = drug_interaction_service.check_interactions(medications)
+                    if interactions:
+                        enrichment["drug_interactions"] = interactions
+            except Exception as e:
+                logger.warning(f"Drug interaction enrichment failed: {e}")
+
+        return enrichment
 
     @staticmethod
     def _is_end_signal(text: str) -> bool:
@@ -496,13 +691,21 @@ class DialogueManager:
         return any(phrase in text_lower for phrase in end_phrases)
 
     def get_session_data(self) -> Dict[str, Any]:
-        """Get serializable session data for persistence."""
+        """Get serializable session data for persistence with PHI redaction."""
+        turns = [t.model_dump(mode="json") for t in self.session.turns]
+
+        # Phase 2: Redact PHI from turns and transcript before persistence
+        redacted_turns = redact_conversation_turns(turns)
+        redacted_transcript = redact_conversation_transcript(
+            self.session.accumulated_transcript
+        )
+
         return {
             "session_id": self.session.session_id,
             "mode": self.session.mode.value,
             "state": self.session.state.value,
-            "turns": [t.model_dump(mode="json") for t in self.session.turns],
-            "accumulated_transcript": self.session.accumulated_transcript,
+            "turns": redacted_turns,
+            "accumulated_transcript": redacted_transcript,
             "extracted_entities": self.session.extracted_entities,
             "language": self.session.language,
             "followup_round": self.session.followup_round,
