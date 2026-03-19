@@ -99,7 +99,16 @@ def _embed(text: str) -> List[float]:
     """Return a normalised embedding vector for the given text."""
     model = _get_embedding_model()
     embedding = model.encode(text, normalize_embeddings=True)
-    return embedding.tolist()
+    vec = embedding.tolist()
+
+    # Phase 4.3: Record embedding for drift detection
+    try:
+        from app.models.rag_evaluation_service import record_embedding_for_drift
+        record_embedding_for_drift(vec)
+    except Exception:
+        pass
+
+    return vec
 
 
 def _redact_phi_for_embedding(text: str) -> str:

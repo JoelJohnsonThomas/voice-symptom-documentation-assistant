@@ -243,6 +243,32 @@ RAG_INDEX_SIZE = Gauge(
     "Number of documents in the RAG vector store",
 )
 
+# RAG Evaluation metrics (Phase 4)
+RAG_EVAL_MRR = Gauge(
+    "rag_eval_mrr",
+    "RAG retrieval Mean Reciprocal Rank from latest evaluation",
+)
+
+RAG_EVAL_RECALL = Gauge(
+    "rag_eval_recall",
+    "RAG retrieval Recall@k from latest evaluation",
+)
+
+RAG_EVAL_PRECISION = Gauge(
+    "rag_eval_precision",
+    "RAG retrieval Precision@k from latest evaluation",
+)
+
+RAG_DRIFT_SCORE = Gauge(
+    "rag_drift_score",
+    "Current embedding drift score (cosine distance from baseline centroid)",
+)
+
+RAG_DRIFT_ALERT = Gauge(
+    "rag_drift_alert",
+    "Whether embedding drift exceeds threshold (1=drifting, 0=stable)",
+)
+
 # Application uptime
 _start_time = time.time()
 
@@ -333,6 +359,20 @@ def evaluate_alerts() -> list[dict]:
                 "threshold": 1,
             })
 
+    # 4. Embedding drift (Phase 4)
+    drift_score = RAG_DRIFT_SCORE.get()
+    if RAG_DRIFT_ALERT.get() == 1.0:
+        alerts.append({
+            "name": "rag_embedding_drift",
+            "severity": "warning",
+            "description": (
+                f"RAG embedding drift detected: score={drift_score:.4f} "
+                f"exceeds threshold {settings.rag_drift_threshold}"
+            ),
+            "value": round(drift_score, 4),
+            "threshold": settings.rag_drift_threshold,
+        })
+
     return alerts
 
 
@@ -377,6 +417,13 @@ def generate_prometheus_text() -> str:
     _write_metric(RAG_FALLBACK_COUNT.name, RAG_FALLBACK_COUNT.description, "counter", RAG_FALLBACK_COUNT.collect())
     _write_metric(RAG_INDEX_SIZE.name, RAG_INDEX_SIZE.description, "gauge", RAG_INDEX_SIZE.collect())
 
+    # RAG Evaluation metrics (Phase 4)
+    _write_metric(RAG_EVAL_MRR.name, RAG_EVAL_MRR.description, "gauge", RAG_EVAL_MRR.collect())
+    _write_metric(RAG_EVAL_RECALL.name, RAG_EVAL_RECALL.description, "gauge", RAG_EVAL_RECALL.collect())
+    _write_metric(RAG_EVAL_PRECISION.name, RAG_EVAL_PRECISION.description, "gauge", RAG_EVAL_PRECISION.collect())
+    _write_metric(RAG_DRIFT_SCORE.name, RAG_DRIFT_SCORE.description, "gauge", RAG_DRIFT_SCORE.collect())
+    _write_metric(RAG_DRIFT_ALERT.name, RAG_DRIFT_ALERT.description, "gauge", RAG_DRIFT_ALERT.collect())
+
     # Uptime
     APP_UPTIME.set(get_uptime())
     _write_metric(APP_UPTIME.name, APP_UPTIME.description, "gauge", APP_UPTIME.collect())
@@ -420,10 +467,20 @@ def get_dashboard_data() -> dict:
         "index_size": int(RAG_INDEX_SIZE.get()),
     }
 
+    # RAG evaluation stats (Phase 4)
+    rag_eval_stats = {
+        "mrr": RAG_EVAL_MRR.get(),
+        "recall": RAG_EVAL_RECALL.get(),
+        "precision": RAG_EVAL_PRECISION.get(),
+        "drift_score": RAG_DRIFT_SCORE.get(),
+        "drift_alert": RAG_DRIFT_ALERT.get() == 1.0,
+    }
+
     return {
         "uptime_seconds": round(get_uptime(), 1),
         "models": model_stats,
         "rag": rag_stats,
+        "rag_evaluation": rag_eval_stats,
         "active_http_connections": ACTIVE_CONNECTIONS.get(type="http"),
         "active_websockets": ACTIVE_CONNECTIONS.get(type="websocket"),
         "alerts": evaluate_alerts(),

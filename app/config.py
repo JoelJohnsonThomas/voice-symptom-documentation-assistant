@@ -111,6 +111,14 @@ class Settings(BaseSettings):
     rag_audit_enabled: bool = True                # Log every RAG retrieval for HIPAA
     rag_vector_store_encryption_enabled: bool = False  # Encrypt vector store at rest
 
+    # RAG Evaluation & Observability (Phase 4)
+    rag_evaluation_enabled: bool = True
+    rag_evaluation_persist_dir: str = "./rag_eval"
+    rag_drift_detection_enabled: bool = True
+    rag_drift_window_size: int = 50               # Embeddings to track per window
+    rag_drift_threshold: float = 0.15             # Cosine distance shift triggering alert
+    rag_hallucination_check_enabled: bool = True   # Cross-ref generated text vs evidence
+
     # Logging
     log_level: str = "INFO"
     

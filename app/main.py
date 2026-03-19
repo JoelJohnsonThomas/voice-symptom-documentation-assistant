@@ -84,6 +84,7 @@ from app.models.fhir_service import get_fhir_service
 from app.models.streaming_asr import StreamingASRSession
 from app.models import rag_service
 from app.models import knowledge_base_service, icd10_service, drug_interaction_service
+from app.models import rag_evaluation_service
 from app.utils.audio_handler import AudioHandler
 
 from app.db.database import AsyncSessionLocal, Base, engine, get_db
@@ -146,6 +147,7 @@ class DocumentationResponse(BaseModel):
     compliance_metadata: dict
     icd10_suggestions: Optional[list] = None
     drug_interactions: Optional[list] = None
+    hallucination_check: Optional[dict] = None
 
 
 class VoiceIntakeResponse(BaseModel):
@@ -159,6 +161,7 @@ class VoiceIntakeResponse(BaseModel):
     detected_language: Optional[str] = "en"
     icd10_suggestions: Optional[list] = None
     drug_interactions: Optional[list] = None
+    hallucination_check: Optional[dict] = None
 
 
 class FHIRExportRequest(BaseModel):
@@ -729,6 +732,18 @@ async def generate_documentation(
         INFERENCE_LATENCY.observe(time.monotonic() - model_start, model="medgemma")
         INFERENCE_COUNT.inc(model="medgemma", status="success")
 
+        # Phase 4: Hallucination check on generated documentation
+        hallucination_result = None
+        try:
+            hallucination_result = rag_evaluation_service.check_documentation_hallucination(
+                documentation=documentation,
+                similar_cases=similar_cases,
+                clinical_guidelines=clinical_guidelines,
+                transcript=request.transcript,
+            )
+        except Exception as exc:
+            logger.debug(f"Hallucination check skipped: {exc}")
+
         logger.info("Documentation generated successfully")
 
         return DocumentationResponse(
@@ -739,6 +754,7 @@ async def generate_documentation(
             compliance_metadata=build_compliance_metadata(),
             icd10_suggestions=icd10_suggestions if icd10_suggestions else None,
             drug_interactions=drug_interactions if drug_interactions else None,
+            hallucination_check=hallucination_result,
         )
     except HTTPException:
         raise
@@ -951,6 +967,18 @@ async def voice_intake(
         INFERENCE_COUNT.inc(model="medgemma", status="success")
         ACTIVE_INFERENCES.dec(model="medgemma")
 
+        # Phase 4: Hallucination check on generated documentation
+        hallucination_result = None
+        try:
+            hallucination_result = rag_evaluation_service.check_documentation_hallucination(
+                documentation=documentation,
+                similar_cases=similar_cases,
+                clinical_guidelines=clinical_guidelines,
+                transcript=transcript,
+            )
+        except Exception as exc:
+            logger.debug(f"Hallucination check skipped: {exc}")
+
         logger.info("Documentation generated")
 
         return VoiceIntakeResponse(
@@ -964,6 +992,7 @@ async def voice_intake(
             detected_language=detected_language,
             icd10_suggestions=icd10_suggestions if icd10_suggestions else None,
             drug_interactions=drug_interactions if drug_interactions else None,
+            hallucination_check=hallucination_result,
         )
     except HTTPException:
         raise
@@ -1714,6 +1743,95 @@ async def rag_security_status():
         },
         "compliance_metadata": build_compliance_metadata(),
     }
+
+
+# =====================================================
+# RAG EVALUATION & OBSERVABILITY ENDPOINTS (Phase 4)
+# =====================================================
+
+class GoldenSetEntry(BaseModel):
+    query: str
+    relevant_ids: List[str]
+    notes: str = ""
+
+
+@app.get("/api/rag/evaluation/summary")
+async def rag_evaluation_summary():
+    """Return RAG evaluation state: golden set size, drift, hallucination config."""
+    return rag_evaluation_service.get_evaluation_summary()
+
+
+@app.post("/api/rag/evaluation/run")
+async def run_rag_evaluation(k: int = 3):
+    """
+    Run retrieval evaluation against the golden set.
+
+    Returns MRR, Recall@k, Precision@k, and per-query breakdowns.
+    """
+    if not settings.rag_evaluation_enabled:
+        raise HTTPException(status_code=400, detail="RAG evaluation is disabled")
+
+    golden_set = rag_evaluation_service.load_golden_set()
+    if not golden_set:
+        return {
+            "status": "no_golden_set",
+            "message": "No golden set entries found. Add entries via POST /api/rag/evaluation/golden-set first.",
+        }
+
+    loop = asyncio.get_event_loop()
+    results = await loop.run_in_executor(
+        None, lambda: rag_evaluation_service.run_retrieval_evaluation(golden_set, k=k)
+    )
+    return results
+
+
+@app.get("/api/rag/evaluation/golden-set")
+async def get_golden_set():
+    """Retrieve the current golden set for RAG evaluation."""
+    entries = rag_evaluation_service.load_golden_set()
+    return {"entries": entries, "count": len(entries)}
+
+
+@app.post("/api/rag/evaluation/golden-set")
+async def add_golden_set(entry: GoldenSetEntry):
+    """Add a new entry to the RAG evaluation golden set."""
+    result = rag_evaluation_service.add_golden_set_entry(
+        query=entry.query,
+        relevant_ids=entry.relevant_ids,
+        notes=entry.notes,
+    )
+    return result
+
+
+@app.delete("/api/rag/evaluation/golden-set/{entry_id}")
+async def delete_golden_set_entry(entry_id: str):
+    """Remove an entry from the golden set."""
+    removed = rag_evaluation_service.remove_golden_set_entry(entry_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Golden set entry '{entry_id}' not found")
+    return {"status": "removed", "id": entry_id}
+
+
+@app.get("/api/rag/drift")
+async def rag_drift_status():
+    """Return current embedding drift score and status."""
+    return rag_evaluation_service.compute_drift()
+
+
+@app.get("/api/rag/drift/history")
+async def rag_drift_history():
+    """Return historical drift scores."""
+    history = rag_evaluation_service.get_drift_history()
+    return {"entries": history, "count": len(history)}
+
+
+@app.post("/api/rag/drift/reset")
+async def rag_drift_reset():
+    """
+    Reset the drift baseline to current recent embeddings.
+    Call after re-indexing or embedding model updates.
+    """
+    return rag_evaluation_service.reset_drift_baseline()
 
 
 # Root endpoint - serve index.html
