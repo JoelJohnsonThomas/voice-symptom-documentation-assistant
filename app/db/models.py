@@ -65,6 +65,22 @@ class AuditLog(Base):
     correlation_id = Column(String, nullable=True, index=True)
 
 
+class ConversationSession(Base):
+    """Stores AI Voice Assistant conversation sessions."""
+    __tablename__ = "conversation_sessions"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    ended_at = Column(DateTime, nullable=True)
+    intake_session_id = Column(String, nullable=True, index=True)
+    mode = Column(String, nullable=False, default="patient")  # "patient" or "clinician"
+    state = Column(String, default="greeting")
+    turns_json = Column(Text, nullable=True)  # JSON array of conversation turns
+    accumulated_transcript = Column(Text, nullable=True)
+    entities_json = Column(Text, nullable=True)  # JSON of extracted entities
+    is_encrypted = Column(Boolean, default=False, nullable=False)
+
+
 class DataExportLog(Base):
     """Tracks all data exports for HIPAA compliance — who exported what, when, and where."""
     __tablename__ = "data_export_logs"

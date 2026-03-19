@@ -269,6 +269,38 @@ RAG_DRIFT_ALERT = Gauge(
     "Whether embedding drift exceeds threshold (1=drifting, 0=stable)",
 )
 
+# Conversation metrics
+CONVERSATION_COUNT = Counter(
+    "conversation_total",
+    "Total voice assistant conversations",
+    label_names=("mode",),  # "patient" or "clinician"
+)
+
+CONVERSATION_DURATION = Histogram(
+    "conversation_duration_seconds",
+    "Voice assistant conversation duration in seconds",
+    label_names=("mode",),
+    buckets=(10, 30, 60, 120, 300, 600, float("inf")),
+)
+
+CONVERSATION_TURNS = Histogram(
+    "conversation_turns",
+    "Number of turns per voice assistant conversation",
+    label_names=("mode",),
+    buckets=(2, 5, 10, 15, 20, 30, float("inf")),
+)
+
+TTS_LATENCY = Histogram(
+    "tts_synthesis_duration_seconds",
+    "TTS audio synthesis latency in seconds",
+    buckets=(0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, float("inf")),
+)
+
+CONVERSATION_EMERGENCY_ESCALATIONS = Counter(
+    "conversation_emergency_escalations_total",
+    "Total emergency escalations during voice assistant conversations",
+)
+
 # Application uptime
 _start_time = time.time()
 
@@ -424,6 +456,13 @@ def generate_prometheus_text() -> str:
     _write_metric(RAG_DRIFT_SCORE.name, RAG_DRIFT_SCORE.description, "gauge", RAG_DRIFT_SCORE.collect())
     _write_metric(RAG_DRIFT_ALERT.name, RAG_DRIFT_ALERT.description, "gauge", RAG_DRIFT_ALERT.collect())
 
+    # Conversation metrics
+    _write_metric(CONVERSATION_COUNT.name, CONVERSATION_COUNT.description, "counter", CONVERSATION_COUNT.collect())
+    _write_metric(CONVERSATION_DURATION.name, CONVERSATION_DURATION.description, "histogram", CONVERSATION_DURATION.collect())
+    _write_metric(CONVERSATION_TURNS.name, CONVERSATION_TURNS.description, "histogram", CONVERSATION_TURNS.collect())
+    _write_metric(TTS_LATENCY.name, TTS_LATENCY.description, "histogram", TTS_LATENCY.collect())
+    _write_metric(CONVERSATION_EMERGENCY_ESCALATIONS.name, CONVERSATION_EMERGENCY_ESCALATIONS.description, "counter", CONVERSATION_EMERGENCY_ESCALATIONS.collect())
+
     # Uptime
     APP_UPTIME.set(get_uptime())
     _write_metric(APP_UPTIME.name, APP_UPTIME.description, "gauge", APP_UPTIME.collect())
@@ -476,11 +515,22 @@ def get_dashboard_data() -> dict:
         "drift_alert": RAG_DRIFT_ALERT.get() == 1.0,
     }
 
+    # Conversation stats
+    conversation_stats = {
+        "total_patient": int(CONVERSATION_COUNT.get(mode="patient")),
+        "total_clinician": int(CONVERSATION_COUNT.get(mode="clinician")),
+        "duration": CONVERSATION_DURATION.get_summary(mode="patient"),
+        "turns": CONVERSATION_TURNS.get_summary(mode="patient"),
+        "tts_latency": TTS_LATENCY.get_summary(),
+        "emergency_escalations": int(CONVERSATION_EMERGENCY_ESCALATIONS.get()),
+    }
+
     return {
         "uptime_seconds": round(get_uptime(), 1),
         "models": model_stats,
         "rag": rag_stats,
         "rag_evaluation": rag_eval_stats,
+        "conversation": conversation_stats,
         "active_http_connections": ACTIVE_CONNECTIONS.get(type="http"),
         "active_websockets": ACTIVE_CONNECTIONS.get(type="websocket"),
         "alerts": evaluate_alerts(),

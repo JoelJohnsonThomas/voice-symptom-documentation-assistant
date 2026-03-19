@@ -3,7 +3,7 @@ from sqlalchemy.future import select
 from sqlalchemy import desc
 from typing import List, Optional
 
-from app.db.models import AuditLog, DataExportLog, IntakeSession, User
+from app.db.models import AuditLog, ConversationSession, DataExportLog, IntakeSession, User
 
 async def create_session(db: AsyncSession, session_data: dict) -> IntakeSession:
     db_session = IntakeSession(
@@ -139,6 +139,51 @@ async def get_audit_logs(
         stmt = stmt.where(AuditLog.phi_accessed == True)
 
     result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+# =====================================================
+# Conversation Session CRUD
+# =====================================================
+
+async def create_conversation_session(
+    db: AsyncSession,
+    session_data: dict,
+) -> ConversationSession:
+    conv = ConversationSession(
+        id=session_data.get("session_id"),
+        mode=session_data.get("mode", "patient"),
+        state=session_data.get("state", "ended"),
+        turns_json=session_data.get("turns_json"),
+        accumulated_transcript=session_data.get("accumulated_transcript"),
+        entities_json=session_data.get("entities_json"),
+        intake_session_id=session_data.get("intake_session_id"),
+        ended_at=session_data.get("ended_at"),
+    )
+    db.add(conv)
+    await db.commit()
+    await db.refresh(conv)
+    return conv
+
+
+async def get_conversation_session(
+    db: AsyncSession, session_id: str
+) -> Optional[ConversationSession]:
+    result = await db.execute(
+        select(ConversationSession).where(ConversationSession.id == session_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_conversation_sessions(
+    db: AsyncSession, skip: int = 0, limit: int = 50
+) -> List[ConversationSession]:
+    result = await db.execute(
+        select(ConversationSession)
+        .order_by(desc(ConversationSession.created_at))
+        .offset(skip)
+        .limit(limit)
+    )
     return result.scalars().all()
 
 

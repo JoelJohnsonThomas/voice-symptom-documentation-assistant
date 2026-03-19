@@ -3058,6 +3058,68 @@ async function runHipaaPurge() {
 }
 
 // =====================================================
+// AI VOICE ASSISTANT INTEGRATION
+// =====================================================
+
+function initConversationMode() {
+    const toggleBtn = document.getElementById('convToggleBtn');
+    const panel = document.getElementById('conversationPanel');
+    const modeSelect = document.getElementById('convModeSelect');
+    const endBtn = document.getElementById('convEndBtn');
+
+    if (!toggleBtn || !panel) return;
+
+    // Initialize conversation manager
+    if (typeof conversationManager !== 'undefined') {
+        conversationManager.init();
+    }
+
+    let conversationActive = false;
+
+    toggleBtn.addEventListener('click', () => {
+        conversationActive = !conversationActive;
+
+        if (conversationActive) {
+            toggleBtn.classList.add('active');
+            panel.classList.add('active');
+            modeSelect.style.display = 'block';
+
+            // Start conversation
+            const mode = modeSelect.value;
+            if (typeof conversationManager !== 'undefined') {
+                conversationManager.start(mode);
+            }
+        } else {
+            toggleBtn.classList.remove('active');
+            panel.classList.remove('active');
+            modeSelect.style.display = 'none';
+
+            // Disconnect
+            if (typeof conversationManager !== 'undefined') {
+                conversationManager.disconnect();
+            }
+        }
+    });
+
+    if (modeSelect) {
+        modeSelect.addEventListener('change', () => {
+            if (conversationActive && typeof conversationManager !== 'undefined') {
+                conversationManager.disconnect();
+                conversationManager.start(modeSelect.value);
+            }
+        });
+    }
+
+    if (endBtn) {
+        endBtn.addEventListener('click', () => {
+            if (typeof conversationManager !== 'undefined') {
+                conversationManager.endConversation();
+            }
+        });
+    }
+}
+
+// =====================================================
 // INITIALIZE
 
 // =====================================================
@@ -3065,4 +3127,5 @@ document.addEventListener('DOMContentLoaded', () => {
     init().catch((error) => {
         console.error('Initialization failed', error);
     });
+    initConversationMode();
 });

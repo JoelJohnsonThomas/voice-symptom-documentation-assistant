@@ -119,6 +119,19 @@ class Settings(BaseSettings):
     rag_drift_threshold: float = 0.15             # Cosine distance shift triggering alert
     rag_hallucination_check_enabled: bool = True   # Cross-ref generated text vs evidence
 
+    # Voice Assistant & Conversation
+    conversation_mode_enabled: bool = False
+    tts_engine: str = "piper"          # "piper" or "webspeech" (browser fallback)
+    piper_model_path: str = "./models/piper/en_US-amy-medium.onnx"
+    piper_config_path: str = "./models/piper/en_US-amy-medium.onnx.json"
+    tts_sample_rate: int = 22050
+    tts_max_text_length: int = 500
+    conversation_max_turns: int = 20
+    conversation_followup_rounds: int = 3
+    conversation_streaming_interval: float = 0.5  # Faster ASR for conversation mode
+    conversation_llm_model: str = ""  # Empty = reuse medgemma_model
+    conversation_llm_separate: bool = False  # Load separate model for conversation
+
     # Logging
     log_level: str = "INFO"
     

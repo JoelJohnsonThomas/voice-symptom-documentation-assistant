@@ -1199,6 +1199,350 @@ async def websocket_transcribe(websocket: WebSocket):
         )
 
 
+# =====================================================
+# AI VOICE ASSISTANT ENDPOINTS
+# =====================================================
+
+@app.websocket("/ws/conversation")
+async def websocket_conversation(websocket: WebSocket):
+    """
+    WebSocket endpoint for AI Voice Assistant bidirectional conversation.
+
+    Protocol:
+    - Client sends binary audio chunks (WebM from MediaRecorder)
+    - Client sends JSON actions: start, stop, text_input, interrupt
+    - Server sends: assistant_text, assistant_audio, user_transcript,
+      entities_update, state_change, summary, error
+    """
+    from app.models.dialogue_manager import DialogueManager
+    from app.models.conversation_session import ConversationMode
+    from app.models.tts_service import get_tts_service
+    from app.metrics import (
+        CONVERSATION_COUNT,
+        CONVERSATION_DURATION,
+        CONVERSATION_TURNS,
+        TTS_LATENCY,
+        CONVERSATION_EMERGENCY_ESCALATIONS,
+    )
+    import base64
+
+    client_ip = websocket.client.host if websocket.client else None
+    await websocket.accept()
+    ACTIVE_CONNECTIONS.inc(type="websocket")
+    logger.info("WebSocket client connected for voice conversation")
+
+    dialogue_mgr = None
+    session_start = time.time()
+    tts = get_tts_service()
+    asr_session = StreamingASRSession(sample_rate=settings.audio_sample_rate)
+    webm_accumulator = bytearray()
+    last_decoded_size = 0
+    conversation_mode = ConversationMode.PATIENT
+    interrupted = False
+
+    try:
+        # Send connected signal
+        await websocket.send_json({
+            "type": "connected",
+            "message": "Voice assistant ready. Send {\"action\": \"start\"} to begin."
+        })
+
+        while True:
+            message = await websocket.receive()
+
+            if message.get("type") == "websocket.disconnect":
+                break
+
+            # Handle binary audio chunks
+            if "bytes" in message and message["bytes"] and dialogue_mgr is not None:
+                if interrupted:
+                    interrupted = False
+
+                chunk_bytes = message["bytes"]
+                webm_accumulator.extend(chunk_bytes)
+
+                audio_data = decode_webm_chunk(
+                    bytes(webm_accumulator),
+                    settings.audio_sample_rate
+                )
+
+                if audio_data is not None and len(audio_data) > last_decoded_size:
+                    new_samples = audio_data[last_decoded_size:]
+                    asr_session.add_audio_array(new_samples)
+                    last_decoded_size = len(audio_data)
+
+                # Check if we should run transcription (faster interval for conversation)
+                if asr_session.should_transcribe():
+                    loop = asyncio.get_event_loop()
+                    result = await loop.run_in_executor(
+                        None, asr_session.transcribe_partial
+                    )
+                    if result and result.get("text"):
+                        await websocket.send_json({
+                            "type": "user_transcript",
+                            "text": result.get("text", ""),
+                            "full_text": result.get("full_text", ""),
+                            "is_final": False,
+                        })
+
+            # Handle text/JSON commands
+            elif "text" in message and message["text"]:
+                try:
+                    cmd = json.loads(message["text"])
+                except json.JSONDecodeError:
+                    cmd = {"action": "text_input", "text": message["text"]}
+
+                action = cmd.get("action", "")
+
+                if action == "start":
+                    # Initialize conversation
+                    mode_str = cmd.get("mode", "patient")
+                    conversation_mode = (
+                        ConversationMode.CLINICIAN
+                        if mode_str == "clinician"
+                        else ConversationMode.PATIENT
+                    )
+                    lang = cmd.get("language", "en")
+                    dialogue_mgr = DialogueManager(mode=conversation_mode, language=lang)
+
+                    CONVERSATION_COUNT.inc(mode=conversation_mode.value)
+                    logger.info(f"Conversation started: mode={conversation_mode.value}, lang={lang}")
+
+                    # Send greeting
+                    greeting = dialogue_mgr.get_greeting()
+                    await websocket.send_json({
+                        "type": "assistant_text",
+                        "text": greeting.text,
+                        "state": greeting.state.value,
+                        "session_id": dialogue_mgr.session.session_id,
+                    })
+
+                    # Send state change
+                    await websocket.send_json({
+                        "type": "state_change",
+                        "from_state": "greeting",
+                        "to_state": greeting.state.value,
+                    })
+
+                    # Synthesize greeting audio
+                    tts_start = time.time()
+                    audio_bytes = tts.synthesize(greeting.text)
+                    if audio_bytes:
+                        TTS_LATENCY.observe(time.time() - tts_start)
+                        await websocket.send_json({
+                            "type": "assistant_audio",
+                            "audio": base64.b64encode(audio_bytes).decode("ascii"),
+                            "format": "wav",
+                            "sample_rate": settings.tts_sample_rate,
+                        })
+
+                elif action == "stop" and dialogue_mgr is not None:
+                    # Finalize ASR and process final turn
+                    if asr_session.get_buffer_duration() > 0.5:
+                        loop = asyncio.get_event_loop()
+                        result = await loop.run_in_executor(
+                            None, asr_session.transcribe_final
+                        )
+                        final_text = result.get("text", "").strip()
+
+                        if final_text:
+                            await websocket.send_json({
+                                "type": "user_transcript",
+                                "text": final_text,
+                                "is_final": True,
+                            })
+
+                            # Process through dialogue manager
+                            response = await dialogue_mgr.process_input(final_text)
+                            await _send_assistant_response(websocket, response, tts, dialogue_mgr)
+
+                    # Reset ASR for next turn
+                    asr_session = StreamingASRSession(sample_rate=settings.audio_sample_rate)
+                    webm_accumulator = bytearray()
+                    last_decoded_size = 0
+
+                elif action == "text_input" and dialogue_mgr is not None:
+                    # Text fallback input
+                    user_text = cmd.get("text", "").strip()
+                    if user_text:
+                        await websocket.send_json({
+                            "type": "user_transcript",
+                            "text": user_text,
+                            "is_final": True,
+                        })
+
+                        response = await dialogue_mgr.process_input(user_text)
+                        await _send_assistant_response(websocket, response, tts, dialogue_mgr)
+
+                elif action == "interrupt":
+                    interrupted = True
+
+                elif action == "end" and dialogue_mgr is not None:
+                    # Force end conversation
+                    response = await dialogue_mgr.process_input("that's all")
+                    await _send_assistant_response(websocket, response, tts, dialogue_mgr)
+
+    except WebSocketDisconnect:
+        logger.info("Voice conversation WebSocket disconnected")
+    except Exception as e:
+        logger.error(f"Conversation WebSocket error: {e}")
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except Exception:
+            pass
+    finally:
+        # Persist conversation session
+        if dialogue_mgr is not None:
+            duration = time.time() - session_start
+            turn_count = len(dialogue_mgr.session.turns)
+            CONVERSATION_DURATION.observe(duration, mode=conversation_mode.value)
+            CONVERSATION_TURNS.observe(turn_count, mode=conversation_mode.value)
+
+            try:
+                session_data = dialogue_mgr.get_session_data()
+                session_data["ended_at"] = datetime.utcnow()
+                session_data["turns_json"] = json.dumps(session_data.pop("turns", []))
+                session_data["entities_json"] = json.dumps(
+                    session_data.pop("extracted_entities", {})
+                )
+
+                async with AsyncSessionLocal() as db:
+                    await crud.create_conversation_session(db, session_data)
+
+                logger.info(
+                    f"Conversation saved: {dialogue_mgr.session.session_id}, "
+                    f"{turn_count} turns, {duration:.1f}s"
+                )
+            except Exception as e:
+                logger.error(f"Failed to persist conversation: {e}")
+
+        ACTIVE_CONNECTIONS.dec(type="websocket")
+
+
+async def _send_assistant_response(websocket, response, tts, dialogue_mgr):
+    """Send assistant response (text + audio + state change) to the client."""
+    from app.metrics import TTS_LATENCY, CONVERSATION_EMERGENCY_ESCALATIONS
+    import base64
+
+    # Send text
+    msg = {
+        "type": "assistant_text",
+        "text": response.text,
+        "state": response.state.value,
+        "is_final": response.is_final,
+        "is_emergency": response.is_emergency,
+        "rag_grounded": response.rag_grounded,
+    }
+    if response.documentation:
+        msg["documentation"] = response.documentation
+    await websocket.send_json(msg)
+
+    # Send state change if state changed
+    if response.previous_state and response.previous_state != response.state:
+        await websocket.send_json({
+            "type": "state_change",
+            "from_state": response.previous_state.value,
+            "to_state": response.state.value,
+        })
+
+    # Send entities update
+    if response.entities_update:
+        await websocket.send_json({
+            "type": "entities_update",
+            "entities": dialogue_mgr.session.extracted_entities,
+        })
+
+    # Track emergency
+    if response.is_emergency:
+        CONVERSATION_EMERGENCY_ESCALATIONS.inc()
+
+    # Synthesize and send audio
+    tts_start = time.time()
+    audio_bytes = tts.synthesize(response.text)
+    if audio_bytes:
+        TTS_LATENCY.observe(time.time() - tts_start)
+        await websocket.send_json({
+            "type": "assistant_audio",
+            "audio": base64.b64encode(audio_bytes).decode("ascii"),
+            "format": "wav",
+            "sample_rate": settings.tts_sample_rate,
+        })
+
+    # Send summary/documentation if final
+    if response.is_final and response.documentation:
+        await websocket.send_json({
+            "type": "summary",
+            "documentation": response.documentation,
+        })
+
+
+class TTSRequest(BaseModel):
+    text: str
+    voice: str = "default"
+
+
+@app.post("/api/tts")
+async def tts_endpoint(request: TTSRequest):
+    """REST endpoint for TTS synthesis (fallback for non-WebSocket clients)."""
+    from app.models.tts_service import get_tts_service
+    from fastapi.responses import Response
+
+    tts = get_tts_service()
+    if not tts.is_available:
+        raise HTTPException(
+            status_code=503,
+            detail="TTS service not available. Use browser Web Speech API fallback.",
+        )
+
+    audio_bytes = tts.synthesize(request.text)
+    if audio_bytes is None:
+        raise HTTPException(status_code=500, detail="TTS synthesis failed")
+
+    return Response(
+        content=audio_bytes,
+        media_type="audio/wav",
+        headers={"Content-Disposition": "inline; filename=tts_output.wav"},
+    )
+
+
+@app.get("/api/conversation/sessions")
+async def list_conversation_sessions(skip: int = 0, limit: int = 50):
+    """List conversation sessions."""
+    async with AsyncSessionLocal() as db:
+        sessions = await crud.get_conversation_sessions(db, skip=skip, limit=limit)
+        return [
+            {
+                "id": s.id,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+                "ended_at": s.ended_at.isoformat() if s.ended_at else None,
+                "mode": s.mode,
+                "state": s.state,
+                "intake_session_id": s.intake_session_id,
+            }
+            for s in sessions
+        ]
+
+
+@app.get("/api/conversation/sessions/{session_id}")
+async def get_conversation_session(session_id: str):
+    """Get a specific conversation session with full details."""
+    async with AsyncSessionLocal() as db:
+        session = await crud.get_conversation_session(db, session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Conversation session not found")
+        return {
+            "id": session.id,
+            "created_at": session.created_at.isoformat() if session.created_at else None,
+            "ended_at": session.ended_at.isoformat() if session.ended_at else None,
+            "mode": session.mode,
+            "state": session.state,
+            "turns": json.loads(session.turns_json) if session.turns_json else [],
+            "accumulated_transcript": session.accumulated_transcript,
+            "entities": json.loads(session.entities_json) if session.entities_json else {},
+            "intake_session_id": session.intake_session_id,
+        }
+
+
 # PWA Endpoints
 @app.get("/service-worker.js")
 async def service_worker():
