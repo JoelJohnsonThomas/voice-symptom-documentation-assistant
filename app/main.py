@@ -1464,7 +1464,7 @@ async def rag_reindex(
     return {
         "indexed": indexed,
         "errors": errors,
-        "total_in_store": stats.get("indexed_sessions", 0),
+        "total_in_store": stats.get("total_chunks", 0),
     }
 
 

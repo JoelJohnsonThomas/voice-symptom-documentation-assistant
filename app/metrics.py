@@ -214,6 +214,35 @@ MODEL_READY = Gauge(
     label_names=("model",),
 )
 
+# RAG metrics
+RAG_RETRIEVAL_LATENCY = Histogram(
+    "rag_retrieval_duration_seconds",
+    "RAG retrieval latency in seconds",
+    buckets=(0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, float("inf")),
+)
+
+RAG_RETRIEVAL_COUNT = Counter(
+    "rag_retrieval_total",
+    "Total RAG retrievals",
+    label_names=("threshold_met",),
+)
+
+RAG_SIMILARITY_SCORE = Histogram(
+    "rag_similarity_score",
+    "Distribution of cosine similarity scores for RAG retrievals",
+    buckets=(0.5, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0),
+)
+
+RAG_FALLBACK_COUNT = Counter(
+    "rag_fallback_total",
+    "Total RAG retrievals that fell below similarity threshold",
+)
+
+RAG_INDEX_SIZE = Gauge(
+    "rag_index_size",
+    "Number of documents in the RAG vector store",
+)
+
 # Application uptime
 _start_time = time.time()
 
@@ -341,6 +370,13 @@ def generate_prometheus_text() -> str:
     _write_metric(ACTIVE_INFERENCES.name, ACTIVE_INFERENCES.description, "gauge", ACTIVE_INFERENCES.collect())
     _write_metric(MODEL_READY.name, MODEL_READY.description, "gauge", MODEL_READY.collect())
 
+    # RAG metrics
+    _write_metric(RAG_RETRIEVAL_LATENCY.name, RAG_RETRIEVAL_LATENCY.description, "histogram", RAG_RETRIEVAL_LATENCY.collect())
+    _write_metric(RAG_RETRIEVAL_COUNT.name, RAG_RETRIEVAL_COUNT.description, "counter", RAG_RETRIEVAL_COUNT.collect())
+    _write_metric(RAG_SIMILARITY_SCORE.name, RAG_SIMILARITY_SCORE.description, "histogram", RAG_SIMILARITY_SCORE.collect())
+    _write_metric(RAG_FALLBACK_COUNT.name, RAG_FALLBACK_COUNT.description, "counter", RAG_FALLBACK_COUNT.collect())
+    _write_metric(RAG_INDEX_SIZE.name, RAG_INDEX_SIZE.description, "gauge", RAG_INDEX_SIZE.collect())
+
     # Uptime
     APP_UPTIME.set(get_uptime())
     _write_metric(APP_UPTIME.name, APP_UPTIME.description, "gauge", APP_UPTIME.collect())
@@ -372,9 +408,22 @@ def get_dashboard_data() -> dict:
             "ready": MODEL_READY.get(model=model) == 1,
         }
 
+    # RAG stats
+    rag_stats = {
+        "retrieval_latency": RAG_RETRIEVAL_LATENCY.get_summary(),
+        "total_retrievals": int(
+            RAG_RETRIEVAL_COUNT.get(threshold_met="true")
+            + RAG_RETRIEVAL_COUNT.get(threshold_met="false")
+        ),
+        "threshold_met": int(RAG_RETRIEVAL_COUNT.get(threshold_met="true")),
+        "fallbacks": int(RAG_FALLBACK_COUNT.get()),
+        "index_size": int(RAG_INDEX_SIZE.get()),
+    }
+
     return {
         "uptime_seconds": round(get_uptime(), 1),
         "models": model_stats,
+        "rag": rag_stats,
         "active_http_connections": ACTIVE_CONNECTIONS.get(type="http"),
         "active_websockets": ACTIVE_CONNECTIONS.get(type="websocket"),
         "alerts": evaluate_alerts(),

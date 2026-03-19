@@ -138,16 +138,22 @@ def create_soap_oap_prompt(
     severity = symptom_details.get("severity_description", "not specified")
     
     # Build optional reference-cases block from RAG retrieval
+    # Includes retrieval confidence so the model can weight references appropriately
     reference_block = ""
     if similar_cases:
         case_texts = []
         for i, case in enumerate(similar_cases, start=1):
             doc = case.get("document", "").strip()
             if doc:
-                case_texts.append(f"Reference case {i}:\n{doc}")
+                confidence = case.get("retrieval_confidence", "unknown")
+                similarity = case.get("similarity", 0)
+                section_type = case.get("metadata", {}).get("section_type", "full")
+                header = f"Reference case {i} (relevance: {confidence}, similarity: {similarity:.2f}, section: {section_type})"
+                case_texts.append(f"{header}:\n{doc}")
         if case_texts:
             reference_block = (
-                "\nSimilar past cases (for reference only — do not copy verbatim):\n"
+                "\nSimilar past cases (for reference only — do not copy verbatim, "
+                "weight higher-relevance cases more heavily):\n"
                 + "\n\n".join(case_texts)
                 + "\n"
             )

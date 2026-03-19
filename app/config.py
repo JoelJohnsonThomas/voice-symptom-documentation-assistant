@@ -83,9 +83,14 @@ class Settings(BaseSettings):
 
     # RAG (Retrieval-Augmented Generation)
     rag_enabled: bool = False
-    rag_embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    rag_embedding_model: str = "NeuML/pubmedbert-base-embeddings"
     rag_persist_dir: str = "./rag_store"
     rag_top_k: int = 3
+    rag_similarity_threshold: float = 0.65       # Min cosine similarity to include a result
+    rag_initial_retrieval_k: int = 20            # Candidates fetched before reranking
+    rag_reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    rag_reranker_enabled: bool = True
+    rag_chunking_enabled: bool = True            # Split SOAP into per-section chunks
 
     # Logging
     log_level: str = "INFO"
