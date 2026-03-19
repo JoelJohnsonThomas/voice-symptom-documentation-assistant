@@ -92,6 +92,16 @@ class Settings(BaseSettings):
     rag_reranker_enabled: bool = True
     rag_chunking_enabled: bool = True            # Split SOAP into per-section chunks
 
+    # Knowledge Base (Phase 2)
+    knowledge_base_enabled: bool = False
+    knowledge_base_persist_dir: str = "./knowledge_store"
+    knowledge_base_guidelines_top_k: int = 3
+    knowledge_base_guidelines_threshold: float = 0.60
+    icd10_lookup_enabled: bool = True             # Semantic ICD-10 code matching
+    icd10_top_k: int = 5                          # Max ICD-10 suggestions per symptom
+    icd10_similarity_threshold: float = 0.60
+    drug_interaction_check_enabled: bool = True    # Auto-check medication interactions
+
     # Logging
     log_level: str = "INFO"
     

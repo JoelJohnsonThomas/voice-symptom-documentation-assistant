@@ -112,23 +112,31 @@ def create_soap_oap_prompt(
     subjective_data: dict,
     language: str = "en",
     similar_cases: list | None = None,
+    clinical_guidelines: list | None = None,
+    drug_interactions: list | None = None,
+    icd10_suggestions: list | None = None,
 ) -> str:
     """
     Create a prompt for generating Objective, Assessment, and Plan SOAP sections.
-    
+
     Uses already-extracted Subjective data as context to generate the remaining
     three SOAP sections. These are SUGGESTIONS for clinician review.
-    
+
+    Phase 2 additions:
+    - clinical_guidelines: Retrieved from knowledge base (CDC, AHA, etc.)
+    - drug_interactions: Flagged medication interactions
+    - icd10_suggestions: Semantically matched ICD-10 codes
+
     Args:
         transcript: Original patient statement
         subjective_data: Dict with chief_complaint, symptom_details, soap_note_subjective
-        
+
     Returns:
         Formatted prompt string for O/A/P generation
     """
     chief_complaint = subjective_data.get("chief_complaint", "not specified")
     soap_subjective = subjective_data.get("soap_note_subjective", "")
-    
+
     symptom_details = subjective_data.get("symptom_details", {})
     symptoms = symptom_details.get("symptoms_mentioned", ["not specified"])
     symptoms_str = ", ".join(symptoms) if isinstance(symptoms, list) else str(symptoms)
@@ -136,7 +144,7 @@ def create_soap_oap_prompt(
     onset = symptom_details.get("onset", "not specified")
     location = symptom_details.get("location", "not specified")
     severity = symptom_details.get("severity_description", "not specified")
-    
+
     # Build optional reference-cases block from RAG retrieval
     # Includes retrieval confidence so the model can weight references appropriately
     reference_block = ""
@@ -158,12 +166,70 @@ def create_soap_oap_prompt(
                 + "\n"
             )
 
+    # Build clinical guidelines block (Phase 2.1)
+    guidelines_block = ""
+    if clinical_guidelines:
+        guideline_texts = []
+        for i, g in enumerate(clinical_guidelines, start=1):
+            doc = g.get("document", "").strip()
+            source = g.get("source", "unknown")
+            similarity = g.get("similarity", 0)
+            if doc:
+                guideline_texts.append(
+                    f"Clinical Reference {i} [{source}] (relevance: {similarity:.2f}):\n{doc}"
+                )
+        if guideline_texts:
+            guidelines_block = (
+                "\nClinical Guidelines (use these as authoritative references for "
+                "assessment and plan — cite the source when applicable):\n"
+                + "\n\n".join(guideline_texts)
+                + "\n"
+            )
+
+    # Build drug interaction alert block (Phase 2.3)
+    interaction_block = ""
+    if drug_interactions:
+        alert_lines = []
+        for interaction in drug_interactions:
+            drugs = " + ".join(interaction.get("drugs", []))
+            severity_tag = interaction.get("severity", "unknown").upper()
+            effect = interaction.get("effect", "")
+            recommendation = interaction.get("recommendation", "")
+            alert_lines.append(
+                f"  [{severity_tag}] {drugs}: {effect}. Recommendation: {recommendation}"
+            )
+        if alert_lines:
+            interaction_block = (
+                "\nDRUG INTERACTION ALERTS (MUST be mentioned in Assessment and Plan):\n"
+                + "\n".join(alert_lines)
+                + "\n"
+            )
+
+    # Build ICD-10 suggestion block (Phase 2.2)
+    icd10_block = ""
+    if icd10_suggestions:
+        code_lines = []
+        for code_entry in icd10_suggestions[:5]:  # Limit to top 5
+            code = code_entry.get("code", "")
+            desc = code_entry.get("description", "")
+            sim = code_entry.get("similarity", 0)
+            validation = code_entry.get("validation_status", "")
+            status_tag = f" [{validation}]" if validation else ""
+            code_lines.append(f"  {code} — {desc} (match: {sim:.2f}){status_tag}")
+        if code_lines:
+            icd10_block = (
+                "\nSuggested ICD-10 Codes (for clinician validation — include relevant "
+                "codes in Assessment):\n"
+                + "\n".join(code_lines)
+                + "\n"
+            )
+
     return f"""You are generating SOAP note sections for CLINICIAN REVIEW.
 
 COMPLIANCE: These are ADMINISTRATIVE SUGGESTIONS only. All clinical decisions
 must be made by a qualified healthcare professional. Do NOT make definitive
 diagnoses or prescribe specific treatments.
-{reference_block}
+{reference_block}{guidelines_block}{interaction_block}{icd10_block}
 Patient Information:
 - Chief Complaint: {chief_complaint}
 - Symptoms: {symptoms_str}

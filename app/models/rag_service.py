@@ -455,6 +455,38 @@ def get_index_stats() -> Dict[str, Any]:
         return {"enabled": True, "error": str(exc)}
 
 
+def retrieve_enriched_context(
+    transcript: str,
+    top_k: Optional[int] = None,
+    exclude_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Unified retrieval that merges session-based RAG with knowledge base
+    guidelines (Phase 2 integration).
+
+    Returns a dict with:
+      - similar_sessions: list from retrieve_similar_sessions()
+      - clinical_guidelines: list from knowledge_base_service
+      - has_context: bool indicating whether any context was found
+    """
+    similar_sessions = retrieve_similar_sessions(
+        transcript, top_k=top_k, exclude_id=exclude_id,
+    )
+
+    clinical_guidelines = []
+    try:
+        from app.models.knowledge_base_service import retrieve_guidelines
+        clinical_guidelines = retrieve_guidelines(transcript)
+    except Exception as exc:
+        logger.debug(f"RAG: knowledge base retrieval skipped: {exc}")
+
+    return {
+        "similar_sessions": similar_sessions,
+        "clinical_guidelines": clinical_guidelines,
+        "has_context": bool(similar_sessions or clinical_guidelines),
+    }
+
+
 def is_ready() -> bool:
     """Return True when RAG is enabled and the collection is accessible."""
     if not settings.rag_enabled:

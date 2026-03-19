@@ -872,7 +872,7 @@ class MedGemmaService:
             "Do you have any other medical conditions, allergies, or medications you are currently taking?",
         ]
 
-    def generate_documentation(self, transcript: str, image_findings: Optional[str] = None, detected_language: str = "en", similar_cases: Optional[List[Dict[str, Any]]] = None, followup_qa: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
+    def generate_documentation(self, transcript: str, image_findings: Optional[str] = None, detected_language: str = "en", similar_cases: Optional[List[Dict[str, Any]]] = None, followup_qa: Optional[List[Dict[str, str]]] = None, clinical_guidelines: Optional[List[Dict[str, Any]]] = None, drug_interactions: Optional[List[Dict[str, Any]]] = None, icd10_suggestions: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
         Generate structured symptom documentation from transcript.
         
@@ -983,7 +983,7 @@ class MedGemmaService:
             
             # Generate O, A, P sections using MedGemma
             try:
-                oap_sections = self.generate_soap_sections(transcript, documentation, detected_language=detected_language, similar_cases=similar_cases)
+                oap_sections = self.generate_soap_sections(transcript, documentation, detected_language=detected_language, similar_cases=similar_cases, clinical_guidelines=clinical_guidelines, drug_interactions=drug_interactions, icd10_suggestions=icd10_suggestions)
                 documentation.update(oap_sections)
             except Exception as oap_err:
                 logger.warning(f"O/A/P generation failed, using defaults: {oap_err}")
@@ -1008,7 +1008,7 @@ class MedGemmaService:
             logger.error(f"Documentation generation failed: {e}")
             raise
     
-    def generate_soap_sections(self, transcript: str, subjective_data: dict, detected_language: str = "en", similar_cases: Optional[List[Dict[str, Any]]] = None) -> dict:
+    def generate_soap_sections(self, transcript: str, subjective_data: dict, detected_language: str = "en", similar_cases: Optional[List[Dict[str, Any]]] = None, clinical_guidelines: Optional[List[Dict[str, Any]]] = None, drug_interactions: Optional[List[Dict[str, Any]]] = None, icd10_suggestions: Optional[List[Dict[str, Any]]] = None) -> dict:
         """
         Generate Objective, Assessment, and Plan SOAP sections.
         
@@ -1026,7 +1026,7 @@ class MedGemmaService:
         
         from app.prompts.documentation_prompts import create_soap_oap_prompt
         
-        prompt_content = create_soap_oap_prompt(transcript, subjective_data, language=detected_language, similar_cases=similar_cases)
+        prompt_content = create_soap_oap_prompt(transcript, subjective_data, language=detected_language, similar_cases=similar_cases, clinical_guidelines=clinical_guidelines, drug_interactions=drug_interactions, icd10_suggestions=icd10_suggestions)
         
         # Use chat template
         messages = [{"role": "user", "content": prompt_content}]

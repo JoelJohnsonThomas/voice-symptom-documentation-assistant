@@ -83,6 +83,7 @@ from app.models.ner_service import get_ner_service
 from app.models.fhir_service import get_fhir_service
 from app.models.streaming_asr import StreamingASRSession
 from app.models import rag_service
+from app.models import knowledge_base_service, icd10_service, drug_interaction_service
 from app.utils.audio_handler import AudioHandler
 
 from app.db.database import AsyncSessionLocal, Base, engine, get_db
@@ -143,6 +144,8 @@ class DocumentationResponse(BaseModel):
     requires_clinician_review: bool
     compliance_notice: str
     compliance_metadata: dict
+    icd10_suggestions: Optional[list] = None
+    drug_interactions: Optional[list] = None
 
 
 class VoiceIntakeResponse(BaseModel):
@@ -154,6 +157,8 @@ class VoiceIntakeResponse(BaseModel):
     compliance_notice: str
     compliance_metadata: dict
     detected_language: Optional[str] = "en"
+    icd10_suggestions: Optional[list] = None
+    drug_interactions: Optional[list] = None
 
 
 class FHIRExportRequest(BaseModel):
@@ -360,6 +365,16 @@ async def startup_event():
         # Start rate limiter cleanup background task
         start_cleanup_task()
         logger.info("Rate limiter cleanup task started.")
+
+        # Initialize knowledge bases (Phase 2)
+        if settings.knowledge_base_enabled:
+            logger.info("Initializing clinical knowledge base...")
+            kb_stats = knowledge_base_service.initialize_knowledge_base()
+            logger.info(f"Knowledge base: {kb_stats}")
+        if settings.icd10_lookup_enabled:
+            logger.info("Initializing ICD-10 index...")
+            icd10_stats = icd10_service.initialize_icd10_index()
+            logger.info(f"ICD-10 index: {icd10_stats}")
 
         # Start data retention auto-purge scheduler
         start_purge_scheduler()
@@ -641,12 +656,52 @@ async def generate_documentation(
                 detail="Transcript too short (minimum 10 characters required)"
             )
 
-        # Retrieve similar past cases for RAG context
-        similar_cases = rag_service.retrieve_similar_sessions(request.transcript)
+        # Retrieve similar past cases + clinical guidelines for RAG context
+        rag_context = rag_service.retrieve_enriched_context(request.transcript)
+        similar_cases = rag_context["similar_sessions"]
+        clinical_guidelines = rag_context["clinical_guidelines"]
         if similar_cases:
             logger.info(f"RAG: retrieved {len(similar_cases)} similar cases for documentation")
+        if clinical_guidelines:
+            logger.info(f"RAG: retrieved {len(clinical_guidelines)} clinical guidelines")
 
-        # Generate documentation
+        # Extract Medical Entities (needed for ICD-10 + drug interactions)
+        ner_service = get_ner_service()
+        ner_start = time.monotonic()
+        extracted_entities = ner_service.extract_entities(request.transcript)
+        INFERENCE_LATENCY.observe(time.monotonic() - ner_start, model="ner")
+        INFERENCE_COUNT.inc(model="ner", status="success")
+
+        # Phase 2.2: Semantic ICD-10 code lookup + cross-validation
+        icd10_suggestions = []
+        if settings.icd10_lookup_enabled:
+            symptoms = extracted_entities.get("conditions", [])
+            symptom_texts = [c.get("text", "") for c in symptoms if c.get("text")]
+            if symptom_texts:
+                semantic_codes = []
+                for s in symptom_texts:
+                    semantic_codes.extend(icd10_service.lookup_icd10_codes(s))
+                # Also look up by transcript for broader coverage
+                semantic_codes.extend(icd10_service.lookup_icd10_codes(request.transcript[:500]))
+                # Deduplicate by code
+                seen_codes = set()
+                unique_codes = []
+                for c in semantic_codes:
+                    if c["code"] not in seen_codes:
+                        seen_codes.add(c["code"])
+                        unique_codes.append(c)
+                # Cross-validate with NER
+                ner_conditions = extracted_entities.get("conditions", [])
+                icd10_suggestions = icd10_service.cross_validate_codes(ner_conditions, unique_codes)
+
+        # Phase 2.3: Drug interaction check
+        drug_interactions = drug_interaction_service.check_interactions_from_entities(
+            extracted_entities, transcript=request.transcript
+        )
+        if drug_interactions:
+            logger.info(f"Drug interactions: {len(drug_interactions)} flagged")
+
+        # Generate documentation with enriched context
         medgemma = get_medgemma_service()
         model_start = time.monotonic()
         followup_qa_dicts = (
@@ -659,16 +714,12 @@ async def generate_documentation(
             image_findings=request.image_findings,
             similar_cases=similar_cases,
             followup_qa=followup_qa_dicts,
+            clinical_guidelines=clinical_guidelines,
+            drug_interactions=drug_interactions,
+            icd10_suggestions=icd10_suggestions,
         )
         INFERENCE_LATENCY.observe(time.monotonic() - model_start, model="medgemma")
         INFERENCE_COUNT.inc(model="medgemma", status="success")
-
-        # Extract Medical Entities
-        ner_service = get_ner_service()
-        ner_start = time.monotonic()
-        extracted_entities = ner_service.extract_entities(request.transcript)
-        INFERENCE_LATENCY.observe(time.monotonic() - ner_start, model="ner")
-        INFERENCE_COUNT.inc(model="ner", status="success")
 
         logger.info("Documentation generated successfully")
 
@@ -678,6 +729,8 @@ async def generate_documentation(
             requires_clinician_review=True,
             compliance_notice=build_compliance_notice(),
             compliance_metadata=build_compliance_metadata(),
+            icd10_suggestions=icd10_suggestions if icd10_suggestions else None,
+            drug_interactions=drug_interactions if drug_interactions else None,
         )
     except HTTPException:
         raise
@@ -829,22 +882,17 @@ async def voice_intake(
             transcript, detected_language = result, "en"
         logger.info(f"Transcription complete: {len(transcript)} characters, Language: {detected_language}")
 
-        # Step 3: Retrieve similar past cases for RAG context
-        similar_cases = rag_service.retrieve_similar_sessions(transcript)
+        # Step 3: Retrieve similar past cases + clinical guidelines for RAG context
+        rag_context = rag_service.retrieve_enriched_context(transcript)
+        similar_cases = rag_context["similar_sessions"]
+        clinical_guidelines = rag_context["clinical_guidelines"]
         if similar_cases:
             logger.info(f"RAG: retrieved {len(similar_cases)} similar cases for voice intake")
+        if clinical_guidelines:
+            logger.info(f"RAG: retrieved {len(clinical_guidelines)} clinical guidelines")
 
-        # Step 4: Generate documentation
+        # Step 4: Extract Medical Entities (needed before doc gen for ICD-10/drug checks)
         ACTIVE_INFERENCES.dec(model="medasr")
-        ACTIVE_INFERENCES.inc(model="medgemma")
-        medgemma = get_medgemma_service()
-        model_start = time.monotonic()
-        documentation = medgemma.generate_documentation(transcript, detected_language=detected_language, similar_cases=similar_cases)
-        INFERENCE_LATENCY.observe(time.monotonic() - model_start, model="medgemma")
-        INFERENCE_COUNT.inc(model="medgemma", status="success")
-
-        # Step 5: Extract Medical Entities
-        ACTIVE_INFERENCES.dec(model="medgemma")
         ACTIVE_INFERENCES.inc(model="ner")
         ner_service = get_ner_service()
         ner_start = time.monotonic()
@@ -852,6 +900,48 @@ async def voice_intake(
         INFERENCE_LATENCY.observe(time.monotonic() - ner_start, model="ner")
         INFERENCE_COUNT.inc(model="ner", status="success")
         ACTIVE_INFERENCES.dec(model="ner")
+
+        # Step 4b: Semantic ICD-10 lookup + cross-validation (Phase 2.2)
+        icd10_suggestions = []
+        if settings.icd10_lookup_enabled:
+            symptoms = extracted_entities.get("conditions", [])
+            symptom_texts = [c.get("text", "") for c in symptoms if c.get("text")]
+            semantic_codes = []
+            for s in symptom_texts:
+                semantic_codes.extend(icd10_service.lookup_icd10_codes(s))
+            semantic_codes.extend(icd10_service.lookup_icd10_codes(transcript[:500]))
+            seen_codes = set()
+            unique_codes = []
+            for c in semantic_codes:
+                if c["code"] not in seen_codes:
+                    seen_codes.add(c["code"])
+                    unique_codes.append(c)
+            icd10_suggestions = icd10_service.cross_validate_codes(
+                extracted_entities.get("conditions", []), unique_codes
+            )
+
+        # Step 4c: Drug interaction check (Phase 2.3)
+        drug_interactions = drug_interaction_service.check_interactions_from_entities(
+            extracted_entities, transcript=transcript
+        )
+        if drug_interactions:
+            logger.info(f"Drug interactions: {len(drug_interactions)} flagged")
+
+        # Step 5: Generate documentation with enriched context
+        ACTIVE_INFERENCES.inc(model="medgemma")
+        medgemma = get_medgemma_service()
+        model_start = time.monotonic()
+        documentation = medgemma.generate_documentation(
+            transcript,
+            detected_language=detected_language,
+            similar_cases=similar_cases,
+            clinical_guidelines=clinical_guidelines,
+            drug_interactions=drug_interactions,
+            icd10_suggestions=icd10_suggestions,
+        )
+        INFERENCE_LATENCY.observe(time.monotonic() - model_start, model="medgemma")
+        INFERENCE_COUNT.inc(model="medgemma", status="success")
+        ACTIVE_INFERENCES.dec(model="medgemma")
 
         logger.info("Documentation generated")
 
@@ -863,7 +953,9 @@ async def voice_intake(
             requires_clinician_review=True,
             compliance_notice=build_compliance_notice(),
             compliance_metadata=build_compliance_metadata(),
-            detected_language=detected_language
+            detected_language=detected_language,
+            icd10_suggestions=icd10_suggestions if icd10_suggestions else None,
+            drug_interactions=drug_interactions if drug_interactions else None,
         )
     except HTTPException:
         raise
@@ -1465,6 +1557,90 @@ async def rag_reindex(
         "indexed": indexed,
         "errors": errors,
         "total_in_store": stats.get("total_chunks", 0),
+    }
+
+
+# =====================================================
+# KNOWLEDGE BASE ENDPOINTS (Phase 2)
+# =====================================================
+
+@app.get("/api/knowledge-base/status")
+async def knowledge_base_status():
+    """Return knowledge base statistics."""
+    return {
+        "guidelines": knowledge_base_service.get_knowledge_base_stats(),
+        "icd10": icd10_service.get_icd10_stats(),
+        "drug_interactions": drug_interaction_service.get_interaction_db_stats(),
+    }
+
+
+@app.post("/api/knowledge-base/initialize")
+async def initialize_knowledge_base(force_reseed: bool = False):
+    """Initialize or re-seed the clinical knowledge base and ICD-10 index."""
+    loop = asyncio.get_event_loop()
+    kb_result = await loop.run_in_executor(
+        None, lambda: knowledge_base_service.initialize_knowledge_base(force_reseed=force_reseed)
+    )
+    icd10_result = await loop.run_in_executor(
+        None, lambda: icd10_service.initialize_icd10_index(force_reseed=force_reseed)
+    )
+    return {
+        "guidelines": kb_result,
+        "icd10": icd10_result,
+    }
+
+
+@app.post("/api/knowledge-base/guidelines")
+async def add_custom_guideline(
+    guideline_id: str,
+    title: str,
+    content: str,
+    source: str,
+    category: str,
+    conditions: List[str],
+):
+    """Add a custom clinical guideline to the knowledge base."""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: knowledge_base_service.add_guideline(
+            guideline_id=guideline_id,
+            title=title,
+            content=content,
+            source=source,
+            category=category,
+            conditions=conditions,
+        ),
+    )
+    return result
+
+
+@app.delete("/api/knowledge-base/guidelines/{guideline_id}")
+async def delete_guideline(guideline_id: str):
+    """Remove a guideline from the knowledge base."""
+    return knowledge_base_service.remove_guideline(guideline_id)
+
+
+@app.post("/api/icd10/lookup")
+async def icd10_lookup(symptom: str, top_k: int = 5):
+    """Semantic ICD-10 code lookup for a symptom description."""
+    loop = asyncio.get_event_loop()
+    results = await loop.run_in_executor(
+        None, lambda: icd10_service.lookup_icd10_codes(symptom, top_k=top_k)
+    )
+    return {"symptom": symptom, "matches": results}
+
+
+@app.post("/api/drug-interactions/check")
+async def check_drug_interactions(medications: List[str], min_severity: str = "moderate"):
+    """Check for drug-drug interactions among a list of medications."""
+    results = drug_interaction_service.check_interactions(
+        medications, min_severity=min_severity
+    )
+    return {
+        "medications": medications,
+        "interactions": results,
+        "interaction_count": len(results),
     }
 
 
