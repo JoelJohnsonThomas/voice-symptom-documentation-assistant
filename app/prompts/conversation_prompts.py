@@ -186,3 +186,124 @@ Respond in JSON format:
     }}
 }}
 """
+
+# =====================================================
+# Phase 3: Multi-Language Template Responses
+# =====================================================
+
+MULTILINGUAL_GREETINGS = {
+    "en": GREETING_PATIENT,
+    "es": (
+        "Hola! Soy su asistente de admision. Le ayudare a describir sus sintomas "
+        "para que su medico tenga toda la informacion necesaria. Nada de lo que "
+        "digo es consejo medico — su medico revisara todo. "
+        "Que le trae hoy?"
+    ),
+    "fr": (
+        "Bonjour! Je suis votre assistant d'accueil. Je vais vous aider a decrire "
+        "vos symptomes afin que votre medecin dispose de toutes les informations "
+        "necessaires. Rien de ce que je dis ne constitue un avis medical — "
+        "votre medecin examinera tout. Qu'est-ce qui vous amene aujourd'hui?"
+    ),
+    "de": (
+        "Hallo! Ich bin Ihr Aufnahmeassistent. Ich helfe Ihnen, Ihre Symptome "
+        "zu beschreiben, damit Ihr Arzt alle notwendigen Informationen hat. "
+        "Nichts, was ich sage, ist medizinischer Rat — Ihr Arzt wird alles "
+        "uberprufen. Was fuhrt Sie heute hierher?"
+    ),
+    "pt": (
+        "Ola! Sou seu assistente de triagem. Vou ajuda-lo a descrever seus "
+        "sintomas para que seu medico tenha todas as informacoes necessarias. "
+        "Nada do que eu digo e conselho medico — seu medico revisara tudo. "
+        "O que o traz aqui hoje?"
+    ),
+    "zh": (
+        "你好！我是您的接诊助手。我将帮助您描述症状，"
+        "以便您的医生获得所需的全部信息。"
+        "我所说的不构成医疗建议——您的医生会审阅一切。"
+        "今天什么情况带您来就诊？"
+    ),
+    "hi": (
+        "नमस्ते! मैं आपका इनटेक सहायक हूं। मैं आपके लक्षणों को समझने में "
+        "मदद करूंगा ताकि आपके डॉक्टर के पास सारी जानकारी हो। "
+        "मैं जो कहता हूं वह चिकित्सा सलाह नहीं है — आपके चिकित्सक सब कुछ "
+        "समीक्षा करेंगे। आज आपको क्या तकलीफ है?"
+    ),
+    "ar": (
+        "مرحبا! أنا مساعد الاستقبال الخاص بك. سأساعدك في وصف أعراضك "
+        "حتى يحصل طبيبك على جميع المعلومات اللازمة. لا شيء مما أقوله "
+        "يعتبر نصيحة طبية — سيراجع طبيبك كل شيء. ما الذي أتى بك اليوم؟"
+    ),
+}
+
+MULTILINGUAL_ACKNOWLEDGMENTS = {
+    "en": ACKNOWLEDGMENT_TEMPLATES,
+    "es": [
+        "Gracias por compartir eso. Lo anoto.",
+        "Entiendo. Esa es informacion util.",
+        "Bien, gracias.",
+        "De acuerdo, lo he anotado.",
+        "Gracias por informarme.",
+    ],
+    "fr": [
+        "Merci d'avoir partage cela. Je le note.",
+        "Je comprends. C'est une information utile.",
+        "Bien recu, merci.",
+        "D'accord, je l'ai note.",
+        "Merci de m'avoir informe.",
+    ],
+}
+
+MULTILINGUAL_EMERGENCY = {
+    "en": EMERGENCY_RESPONSE,
+    "es": (
+        "Segun lo que ha descrito, esto puede requerir atencion medica inmediata. "
+        "Por favor llame al 911 o vaya a la sala de emergencias mas cercana de inmediato. "
+        "No puedo proporcionar atencion medica de emergencia, "
+        "pero obtener ayuda rapidamente es importante."
+    ),
+    "fr": (
+        "D'apres ce que vous avez decrit, cela peut necessiter une attention "
+        "medicale immediate. Veuillez appeler le 15 (SAMU) ou rendez-vous aux "
+        "urgences les plus proches immediatement."
+    ),
+}
+
+MULTILINGUAL_SUMMARY = {
+    "en": SUMMARY_INTRO,
+    "es": (
+        "Gracias por su paciencia. Aqui hay un resumen de lo que discutimos. "
+        "Su medico lo revisara cuidadosamente."
+    ),
+    "fr": (
+        "Merci pour votre patience. Voici un resume de ce dont nous avons discute. "
+        "Votre medecin l'examinera attentivement."
+    ),
+}
+
+
+def get_greeting_for_language(language: str, mode: str = "patient") -> str:
+    """Get greeting text for a language, falling back to English."""
+    if mode == "clinician":
+        return GREETING_CLINICIAN  # Clinician mode stays in English
+
+    lang_key = language[:2] if len(language) > 2 else language
+    return MULTILINGUAL_GREETINGS.get(lang_key, GREETING_PATIENT)
+
+
+def get_acknowledgment_for_language(language: str) -> list:
+    """Get acknowledgment templates for a language."""
+    lang_key = language[:2] if len(language) > 2 else language
+    return MULTILINGUAL_ACKNOWLEDGMENTS.get(lang_key, ACKNOWLEDGMENT_TEMPLATES)
+
+
+def get_emergency_for_language(language: str) -> str:
+    """Get emergency response for a language."""
+    lang_key = language[:2] if len(language) > 2 else language
+    return MULTILINGUAL_EMERGENCY.get(lang_key, EMERGENCY_RESPONSE)
+
+
+def get_summary_for_language(language: str) -> str:
+    """Get summary intro for a language."""
+    lang_key = language[:2] if len(language) > 2 else language
+    return MULTILINGUAL_SUMMARY.get(lang_key, SUMMARY_INTRO)

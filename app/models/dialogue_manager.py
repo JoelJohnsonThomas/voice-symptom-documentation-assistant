@@ -43,6 +43,10 @@ from app.prompts.conversation_prompts import (
     SUMMARY_INTRO,
     SYMPTOM_ACK_TEMPLATE,
     TRANSITION_TO_FOLLOWUP,
+    get_acknowledgment_for_language,
+    get_emergency_for_language,
+    get_greeting_for_language,
+    get_summary_for_language,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,11 +68,13 @@ class DialogueManager:
         self._questions_asked: list[str] = []
 
     async def get_greeting(self) -> AssistantResponse:
-        """Generate the initial greeting message."""
+        """Generate the initial greeting message (Phase 3: multi-language)."""
         if self.session.mode == ConversationMode.CLINICIAN:
             text = GREETING_CLINICIAN
         else:
-            text = GREETING_PATIENT
+            text = get_greeting_for_language(
+                self.session.language, self.session.mode.value
+            )
 
         self.session.add_turn("assistant", text)
         self.session.state = ConversationState.CHIEF_COMPLAINT
@@ -136,9 +142,10 @@ class DialogueManager:
             )
 
     async def _handle_emergency(self, matched_pattern: Optional[str]) -> AssistantResponse:
-        """Handle emergency detection — advise 911 immediately."""
+        """Handle emergency detection — advise 911 immediately (Phase 3: multi-lang)."""
+        emergency_text = get_emergency_for_language(self.session.language)
         self.session.state = ConversationState.EMERGENCY_ESCALATION
-        self.session.add_turn("assistant", EMERGENCY_RESPONSE)
+        self.session.add_turn("assistant", emergency_text)
 
         # Phase 2: Audit log the emergency escalation
         await log_conversation_audit_event(
@@ -149,24 +156,32 @@ class DialogueManager:
         )
 
         return AssistantResponse(
-            text=EMERGENCY_RESPONSE,
+            text=emergency_text,
             state=ConversationState.EMERGENCY_ESCALATION,
             is_emergency=True,
             is_final=True,
         )
 
     async def _handle_chief_complaint(self, user_text: str) -> AssistantResponse:
-        """Process the initial chief complaint."""
+        """Process the initial chief complaint (Phase 3: auto-detect language)."""
+        # Phase 3: Auto-detect language from first utterance
+        if settings.conversation_auto_detect_language:
+            detected_lang = await self._detect_language(user_text)
+            if detected_lang and detected_lang != self.session.language:
+                self.session.language = detected_lang
+                logger.info(f"Language auto-detected: {detected_lang}")
+
         # Run NER to extract entities
         entities = await self._run_ner(user_text)
 
-        # Build acknowledgment with extracted symptoms
+        # Build acknowledgment with extracted symptoms (Phase 3: multi-lang)
+        ack_templates = get_acknowledgment_for_language(self.session.language)
         symptom_names = [e.get("text", e.get("name", "")) for e in entities.get("conditions", [])]
         if symptom_names:
             summary = ", ".join(symptom_names[:3])
             text = SYMPTOM_ACK_TEMPLATE.format(symptom_summary=summary)
         else:
-            text = random.choice(ACKNOWLEDGMENT_TEMPLATES)
+            text = random.choice(ack_templates)
 
         # Transition to symptom details
         text += " " + TRANSITION_TO_FOLLOWUP
@@ -186,8 +201,9 @@ class DialogueManager:
         # Run NER
         entities = await self._run_ner(user_text)
 
-        # Acknowledge
-        text = random.choice(ACKNOWLEDGMENT_TEMPLATES)
+        # Acknowledge (Phase 3: multi-lang)
+        ack_templates = get_acknowledgment_for_language(self.session.language)
+        text = random.choice(ack_templates)
 
         # Transition to follow-up (LLM-generated questions)
         prev_state = self.session.state
@@ -229,8 +245,9 @@ class DialogueManager:
         if self.session.followup_round >= max_rounds:
             return await self._handle_summary()
 
-        # Generate next follow-up question (Phase 2: RAG-grounded)
-        text = random.choice(ACKNOWLEDGMENT_TEMPLATES)
+        # Generate next follow-up question (Phase 2: RAG-grounded, Phase 3: multi-lang)
+        ack_templates = get_acknowledgment_for_language(self.session.language)
+        text = random.choice(ack_templates)
         followup = await self._generate_followup_question()
         if followup:
             # Phase 2: Apply safety filter to LLM-generated text
@@ -284,7 +301,7 @@ class DialogueManager:
         if enrichment.get("drug_interactions"):
             documentation["drug_interactions"] = enrichment["drug_interactions"]
 
-        text = SUMMARY_INTRO
+        text = get_summary_for_language(self.session.language)
         self.session.add_turn("assistant", text)
         self.session.state = ConversationState.ENDED
 
@@ -669,6 +686,66 @@ class DialogueManager:
                 logger.warning(f"Drug interaction enrichment failed: {e}")
 
         return enrichment
+
+    async def _detect_language(self, text: str) -> Optional[str]:
+        """
+        Detect language from user text using MedASR's language detection.
+
+        Falls back to simple heuristics if MedASR is unavailable.
+        Returns ISO 639-1 language code (e.g., 'en', 'es', 'fr') or None.
+        """
+        if not text or len(text.strip()) < 10:
+            return None
+
+        try:
+            from app.models.medasr_service import get_medasr_service
+            import asyncio
+
+            medasr = get_medasr_service()
+            if medasr.is_ready() and hasattr(medasr, "detect_language"):
+                loop = asyncio.get_event_loop()
+                detected = await loop.run_in_executor(
+                    None, medasr.detect_language, text
+                )
+                if detected:
+                    return detected[:2]  # Normalize to 2-letter code
+        except Exception as e:
+            logger.debug(f"MedASR language detection failed: {e}")
+
+        # Simple heuristic fallback based on Unicode ranges
+        try:
+            # Chinese characters
+            if any("\u4e00" <= ch <= "\u9fff" for ch in text):
+                return "zh"
+            # Arabic script
+            if any("\u0600" <= ch <= "\u06ff" for ch in text):
+                return "ar"
+            # Devanagari (Hindi)
+            if any("\u0900" <= ch <= "\u097f" for ch in text):
+                return "hi"
+            # Common Spanish/French/German/Portuguese indicators
+            text_lower = text.lower()
+            spanish_markers = ["tengo", "dolor", "estoy", "siento", "hace"]
+            french_markers = ["j'ai", "depuis", "douleur", "je suis", "mal"]
+            german_markers = ["ich habe", "schmerzen", "seit", "mir ist"]
+            portuguese_markers = ["estou", "tenho", "dor", "sinto"]
+
+            for marker in spanish_markers:
+                if marker in text_lower:
+                    return "es"
+            for marker in french_markers:
+                if marker in text_lower:
+                    return "fr"
+            for marker in german_markers:
+                if marker in text_lower:
+                    return "de"
+            for marker in portuguese_markers:
+                if marker in text_lower:
+                    return "pt"
+        except Exception:
+            pass
+
+        return None
 
     @staticmethod
     def _is_end_signal(text: str) -> bool:

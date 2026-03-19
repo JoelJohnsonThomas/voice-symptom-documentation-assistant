@@ -1212,11 +1212,19 @@ async def websocket_conversation(websocket: WebSocket):
     - Client sends binary audio chunks (WebM from MediaRecorder)
     - Client sends JSON actions: start, stop, text_input, interrupt
     - Server sends: assistant_text, assistant_audio, user_transcript,
-      entities_update, state_change, summary, error
+      entities_update, state_change, summary, error, vad_status
+
+    Phase 3 enhancements:
+    - VAD-based automatic turn-taking and barge-in detection
+    - Sentence-level TTS streaming for low time-to-first-byte
+    - Multi-language TTS voice model switching
+    - Greeting audio cache for instant playback
+    - Faster ASR intervals (conversation_streaming_interval)
     """
     from app.models.dialogue_manager import DialogueManager
     from app.models.conversation_session import ConversationMode
     from app.models.tts_service import get_tts_service
+    from app.models.vad_service import get_vad_service
     from app.metrics import (
         CONVERSATION_COUNT,
         CONVERSATION_DURATION,
@@ -1234,17 +1242,34 @@ async def websocket_conversation(websocket: WebSocket):
     dialogue_mgr = None
     session_start = time.time()
     tts = get_tts_service()
+    vad = get_vad_service()
     asr_session = StreamingASRSession(sample_rate=settings.audio_sample_rate)
     webm_accumulator = bytearray()
     last_decoded_size = 0
     conversation_mode = ConversationMode.PATIENT
     interrupted = False
+    is_assistant_speaking = False  # Track TTS playback state for barge-in
+
+    # Phase 3: Initialize TTS greeting cache at first connection
+    if settings.tts_cache_greetings and tts.cache_size == 0:
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, tts.cache_greeting_audio)
+            logger.info(f"TTS greeting cache initialized: {tts.cache_size} entries")
+        except Exception as e:
+            logger.debug(f"TTS greeting cache init failed: {e}")
+
+    # Phase 3: Override ASR interval for faster conversation responsiveness
+    if hasattr(asr_session, '_interval'):
+        asr_session._interval = settings.conversation_streaming_interval
 
     try:
         # Send connected signal
         await websocket.send_json({
             "type": "connected",
-            "message": "Voice assistant ready. Send {\"action\": \"start\"} to begin."
+            "message": "Voice assistant ready. Send {\"action\": \"start\"} to begin.",
+            "vad_enabled": vad.is_available,
+            "tts_streaming": settings.tts_streaming_enabled,
         })
 
         while True:
@@ -1255,9 +1280,6 @@ async def websocket_conversation(websocket: WebSocket):
 
             # Handle binary audio chunks
             if "bytes" in message and message["bytes"] and dialogue_mgr is not None:
-                if interrupted:
-                    interrupted = False
-
                 chunk_bytes = message["bytes"]
                 webm_accumulator.extend(chunk_bytes)
 
@@ -1270,6 +1292,56 @@ async def websocket_conversation(websocket: WebSocket):
                     new_samples = audio_data[last_decoded_size:]
                     asr_session.add_audio_array(new_samples)
                     last_decoded_size = len(audio_data)
+
+                    # Phase 3: VAD processing on new audio samples
+                    if vad.is_available and len(new_samples) >= 512:
+                        vad_result = vad.process_frame(new_samples[:768])
+
+                        # Barge-in detection: user starts speaking during TTS
+                        if vad_result["barge_in"] and is_assistant_speaking:
+                            interrupted = True
+                            is_assistant_speaking = False
+                            await websocket.send_json({
+                                "type": "vad_status",
+                                "event": "barge_in",
+                                "speech_prob": vad_result["speech_prob"],
+                            })
+
+                        # Auto turn-taking: silence after speech → end of turn
+                        if vad_result["turn_ended"] and not interrupted:
+                            # Finalize ASR automatically
+                            loop = asyncio.get_event_loop()
+                            result = await loop.run_in_executor(
+                                None, asr_session.transcribe_final
+                            )
+                            final_text = result.get("text", "").strip()
+
+                            if final_text:
+                                await websocket.send_json({
+                                    "type": "user_transcript",
+                                    "text": final_text,
+                                    "is_final": True,
+                                })
+
+                                # Process through dialogue manager
+                                response = await dialogue_mgr.process_input(final_text)
+                                await _send_assistant_response(
+                                    websocket, response, tts, dialogue_mgr
+                                )
+
+                            # Reset ASR for next turn
+                            asr_session = StreamingASRSession(
+                                sample_rate=settings.audio_sample_rate
+                            )
+                            if hasattr(asr_session, '_interval'):
+                                asr_session._interval = settings.conversation_streaming_interval
+                            webm_accumulator = bytearray()
+                            last_decoded_size = 0
+                            vad.reset()
+                            continue
+
+                if interrupted:
+                    interrupted = False
 
                 # Check if we should run transcription (faster interval for conversation)
                 if asr_session.should_transcribe():
@@ -1324,17 +1396,37 @@ async def websocket_conversation(websocket: WebSocket):
                         "to_state": greeting.state.value,
                     })
 
-                    # Synthesize greeting audio
+                    # Phase 3: Use cached TTS for greeting, with multi-language support
+                    is_assistant_speaking = True
                     tts_start = time.time()
-                    audio_bytes = tts.synthesize(greeting.text)
-                    if audio_bytes:
+                    if settings.tts_streaming_enabled:
+                        # Sentence-level streaming for low time-to-first-byte
+                        async for audio_chunk in tts.synthesize_streaming(greeting.text):
+                            if interrupted:
+                                break
+                            await websocket.send_json({
+                                "type": "assistant_audio",
+                                "audio": base64.b64encode(audio_chunk).decode("ascii"),
+                                "format": "wav",
+                                "sample_rate": settings.tts_sample_rate,
+                                "streaming": True,
+                            })
                         TTS_LATENCY.observe(time.time() - tts_start)
-                        await websocket.send_json({
-                            "type": "assistant_audio",
-                            "audio": base64.b64encode(audio_bytes).decode("ascii"),
-                            "format": "wav",
-                            "sample_rate": settings.tts_sample_rate,
-                        })
+                    else:
+                        # Non-streaming: use cached greeting audio
+                        audio_bytes = tts.synthesize_cached(greeting.text)
+                        if audio_bytes:
+                            TTS_LATENCY.observe(time.time() - tts_start)
+                            await websocket.send_json({
+                                "type": "assistant_audio",
+                                "audio": base64.b64encode(audio_bytes).decode("ascii"),
+                                "format": "wav",
+                                "sample_rate": settings.tts_sample_rate,
+                            })
+                    is_assistant_speaking = False
+
+                    # Reset VAD state after greeting
+                    vad.reset()
 
                 elif action == "stop" and dialogue_mgr is not None:
                     # Finalize ASR and process final turn
@@ -1358,8 +1450,11 @@ async def websocket_conversation(websocket: WebSocket):
 
                     # Reset ASR for next turn
                     asr_session = StreamingASRSession(sample_rate=settings.audio_sample_rate)
+                    if hasattr(asr_session, '_interval'):
+                        asr_session._interval = settings.conversation_streaming_interval
                     webm_accumulator = bytearray()
                     last_decoded_size = 0
+                    vad.reset()
 
                 elif action == "text_input" and dialogue_mgr is not None:
                     # Text fallback input
@@ -1376,6 +1471,11 @@ async def websocket_conversation(websocket: WebSocket):
 
                 elif action == "interrupt":
                     interrupted = True
+                    is_assistant_speaking = False
+
+                elif action == "playback_ended":
+                    # Client signals TTS playback finished
+                    is_assistant_speaking = False
 
                 elif action == "end" and dialogue_mgr is not None:
                     # Force end conversation
@@ -1420,7 +1520,13 @@ async def websocket_conversation(websocket: WebSocket):
 
 
 async def _send_assistant_response(websocket, response, tts, dialogue_mgr):
-    """Send assistant response (text + audio + state change) to the client."""
+    """Send assistant response (text + audio + state change) to the client.
+
+    Phase 3 enhancements:
+    - Sentence-level TTS streaming for low time-to-first-byte
+    - Multi-language TTS voice model switching
+    - Cached TTS for common responses
+    """
     from app.metrics import TTS_LATENCY, CONVERSATION_EMERGENCY_ESCALATIONS
     import base64
 
@@ -1456,17 +1562,36 @@ async def _send_assistant_response(websocket, response, tts, dialogue_mgr):
     if response.is_emergency:
         CONVERSATION_EMERGENCY_ESCALATIONS.inc()
 
-    # Synthesize and send audio
+    # Phase 3: Synthesize and send audio with streaming + multi-language support
+    language = dialogue_mgr.session.language
     tts_start = time.time()
-    audio_bytes = tts.synthesize(response.text)
-    if audio_bytes:
+
+    if settings.tts_streaming_enabled:
+        # Sentence-level streaming for low time-to-first-byte
+        async for audio_chunk in tts.synthesize_streaming(response.text):
+            await websocket.send_json({
+                "type": "assistant_audio",
+                "audio": base64.b64encode(audio_chunk).decode("ascii"),
+                "format": "wav",
+                "sample_rate": settings.tts_sample_rate,
+                "streaming": True,
+            })
         TTS_LATENCY.observe(time.time() - tts_start)
-        await websocket.send_json({
-            "type": "assistant_audio",
-            "audio": base64.b64encode(audio_bytes).decode("ascii"),
-            "format": "wav",
-            "sample_rate": settings.tts_sample_rate,
-        })
+    else:
+        # Non-streaming: use language-specific or cached synthesis
+        if language and language != "en":
+            audio_bytes = tts.synthesize_language(response.text, language)
+        else:
+            audio_bytes = tts.synthesize_cached(response.text)
+
+        if audio_bytes:
+            TTS_LATENCY.observe(time.time() - tts_start)
+            await websocket.send_json({
+                "type": "assistant_audio",
+                "audio": base64.b64encode(audio_bytes).decode("ascii"),
+                "format": "wav",
+                "sample_rate": settings.tts_sample_rate,
+            })
 
     # Send summary/documentation if final
     if response.is_final and response.documentation:

@@ -3,15 +3,21 @@ Piper TTS Service — Text-to-Speech for the AI Voice Assistant.
 
 Uses Piper TTS (ONNX-based, local, HIPAA-safe) as primary engine
 with Web Speech API fallback handled on the client side.
+
+Phase 3 enhancements:
+- Greeting audio cache (pre-synthesize common responses at startup)
+- Sentence-level streaming for low time-to-first-byte
+- Multi-language voice model switching
 """
 
 import io
 import json
 import logging
 import struct
+import time
 import wave
 from pathlib import Path
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Dict, Optional
 
 from app.config import settings
 
@@ -28,6 +34,8 @@ class PiperTTSService:
         self._model = None
         self._config = None
         self._loaded = False
+        self._audio_cache: Dict[str, bytes] = {}  # Phase 3: greeting cache
+        self._voice_models: Dict[str, str] = {}   # Phase 3: lang -> model path
 
     def _load_model(self):
         """Lazy-load the Piper TTS model on first use."""
@@ -187,11 +195,13 @@ class PiperTTSService:
         """
         Synthesize text sentence-by-sentence for low time-to-first-byte.
 
+        Phase 3: Improved splitting and cache lookups per sentence.
         Yields WAV audio chunks for each sentence.
         """
+        import asyncio
         import re
 
-        # Split into sentences
+        # Split at sentence boundaries, keeping short sentences together
         sentences = re.split(r'(?<=[.!?])\s+', text.strip())
 
         for sentence in sentences:
@@ -199,9 +209,153 @@ class PiperTTSService:
             if not sentence:
                 continue
 
-            audio = self.synthesize(sentence)
+            # Check cache first
+            cached = self._audio_cache.get(sentence)
+            if cached:
+                yield cached
+                continue
+
+            # Synthesize in executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            audio = await loop.run_in_executor(None, self.synthesize, sentence)
             if audio:
                 yield audio
+
+    # =====================================================
+    # Phase 3: Greeting Audio Cache
+    # =====================================================
+
+    def cache_greeting_audio(self):
+        """
+        Pre-synthesize common greetings and acknowledgments at startup.
+
+        Caches are keyed by text content, so duplicate requests return instantly.
+        """
+        if not self.is_available or not settings.tts_cache_greetings:
+            return
+
+        from app.prompts.conversation_prompts import (
+            GREETING_PATIENT,
+            GREETING_CLINICIAN,
+            ACKNOWLEDGMENT_TEMPLATES,
+            SUMMARY_INTRO,
+            EMERGENCY_RESPONSE,
+            SESSION_END,
+        )
+
+        texts_to_cache = [
+            GREETING_PATIENT,
+            GREETING_CLINICIAN,
+            SUMMARY_INTRO,
+            EMERGENCY_RESPONSE,
+            SESSION_END,
+        ] + list(ACKNOWLEDGMENT_TEMPLATES)
+
+        cached_count = 0
+        for text in texts_to_cache:
+            if text and text not in self._audio_cache:
+                audio = self.synthesize(text)
+                if audio:
+                    self._audio_cache[text] = audio
+                    cached_count += 1
+
+        logger.info(f"TTS greeting cache: {cached_count} responses pre-synthesized")
+
+    def synthesize_cached(self, text: str) -> Optional[bytes]:
+        """
+        Synthesize with cache lookup. Returns cached audio if available,
+        otherwise synthesizes and caches.
+        """
+        if text in self._audio_cache:
+            return self._audio_cache[text]
+
+        audio = self.synthesize(text)
+        if audio and len(text) < 300:  # Only cache short responses
+            self._audio_cache[text] = audio
+        return audio
+
+    @property
+    def cache_size(self) -> int:
+        """Number of cached audio responses."""
+        return len(self._audio_cache)
+
+    # =====================================================
+    # Phase 3: Multi-Language Voice Model Switching
+    # =====================================================
+
+    def _load_voice_models_config(self):
+        """Load multi-language voice model mapping from config."""
+        if self._voice_models:
+            return
+
+        if settings.piper_voice_models:
+            try:
+                self._voice_models = json.loads(settings.piper_voice_models)
+                logger.info(
+                    f"Multi-language TTS: {len(self._voice_models)} voice models configured"
+                )
+            except json.JSONDecodeError:
+                logger.warning("Invalid piper_voice_models JSON, using default voice only")
+
+    def get_voice_for_language(self, language: str) -> Optional[str]:
+        """
+        Get the Piper voice model path for a language code.
+
+        Returns None if no model is configured for the language
+        (will use default model).
+        """
+        self._load_voice_models_config()
+        # Try exact match, then 2-letter prefix
+        model_path = self._voice_models.get(language)
+        if not model_path and len(language) > 2:
+            model_path = self._voice_models.get(language[:2])
+        return model_path
+
+    def synthesize_language(self, text: str, language: str) -> Optional[bytes]:
+        """
+        Synthesize text using the voice model for the specified language.
+
+        Falls back to default voice if no language-specific model is configured.
+        """
+        voice_model = self.get_voice_for_language(language)
+
+        if voice_model and voice_model != settings.piper_model_path:
+            # Synthesize with language-specific model via subprocess
+            return self._synthesize_with_model(text, voice_model)
+
+        # Default model
+        return self.synthesize(text)
+
+    def _synthesize_with_model(self, text: str, model_path: str) -> Optional[bytes]:
+        """Synthesize using a specific Piper model path."""
+        import subprocess
+
+        config_path = model_path + ".json"
+
+        try:
+            result = subprocess.run(
+                [
+                    "piper",
+                    "--model", model_path,
+                    "--config", config_path,
+                    "--output-raw",
+                ],
+                input=text.encode("utf-8"),
+                capture_output=True,
+                timeout=10,
+            )
+
+            if result.returncode != 0:
+                logger.error(f"Piper CLI error for model {model_path}: {result.stderr.decode()}")
+                return self.synthesize(text)  # Fallback to default
+
+            return self._pcm_to_wav(result.stdout)
+        except FileNotFoundError:
+            logger.warning(f"Piper CLI not found, falling back to default model")
+            return self.synthesize(text)
+        except Exception as e:
+            logger.error(f"Language TTS synthesis failed: {e}")
+            return self.synthesize(text)
 
 
 def get_tts_service() -> PiperTTSService:

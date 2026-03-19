@@ -132,6 +132,22 @@ class Settings(BaseSettings):
     conversation_llm_model: str = ""  # Empty = reuse medgemma_model
     conversation_llm_separate: bool = False  # Load separate model for conversation
 
+    # Phase 3: Voice Activity Detection
+    vad_enabled: bool = True
+    vad_threshold: float = 0.5         # Speech probability threshold (0-1)
+    vad_min_silence_ms: int = 800      # Silence duration to trigger end-of-turn (ms)
+    vad_min_speech_ms: int = 250       # Minimum speech duration to accept (ms)
+    vad_window_size_ms: int = 32       # VAD analysis window (Silero uses 32ms chunks)
+
+    # Phase 3: TTS Caching & Streaming
+    tts_cache_greetings: bool = True   # Pre-cache greeting audio at startup
+    tts_streaming_enabled: bool = True # Send TTS sentence-by-sentence
+
+    # Phase 3: Multi-Language
+    conversation_auto_detect_language: bool = True
+    conversation_default_language: str = "en"
+    piper_voice_models: str = ""       # JSON map: {"es": "./models/piper/es_ES-...", ...}
+
     # Logging
     log_level: str = "INFO"
     

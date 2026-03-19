@@ -366,3 +366,261 @@ class TestDialogueManagerInit:
         dm = DialogueManager()
         assert dm.session.session_id is not None
         assert len(dm.session.session_id) > 0
+
+
+# =====================================================
+# Phase 3: Multi-Language Support Tests
+# =====================================================
+
+class TestMultiLanguageSupport:
+    def test_greeting_english(self):
+        from app.prompts.conversation_prompts import get_greeting_for_language, GREETING_PATIENT
+        assert get_greeting_for_language("en") == GREETING_PATIENT
+
+    def test_greeting_spanish(self):
+        from app.prompts.conversation_prompts import get_greeting_for_language
+        greeting = get_greeting_for_language("es")
+        assert "Hola" in greeting
+        assert "sintomas" in greeting or "asistente" in greeting
+
+    def test_greeting_french(self):
+        from app.prompts.conversation_prompts import get_greeting_for_language
+        greeting = get_greeting_for_language("fr")
+        assert "Bonjour" in greeting
+
+    def test_greeting_chinese(self):
+        from app.prompts.conversation_prompts import get_greeting_for_language
+        greeting = get_greeting_for_language("zh")
+        assert "你好" in greeting
+
+    def test_greeting_hindi(self):
+        from app.prompts.conversation_prompts import get_greeting_for_language
+        greeting = get_greeting_for_language("hi")
+        assert "नमस्ते" in greeting
+
+    def test_greeting_unknown_falls_back_to_english(self):
+        from app.prompts.conversation_prompts import get_greeting_for_language, GREETING_PATIENT
+        assert get_greeting_for_language("xx") == GREETING_PATIENT
+
+    def test_greeting_clinician_always_english(self):
+        from app.prompts.conversation_prompts import get_greeting_for_language, GREETING_CLINICIAN
+        assert get_greeting_for_language("es", "clinician") == GREETING_CLINICIAN
+
+    def test_acknowledgment_english(self):
+        from app.prompts.conversation_prompts import get_acknowledgment_for_language, ACKNOWLEDGMENT_TEMPLATES
+        result = get_acknowledgment_for_language("en")
+        assert result == ACKNOWLEDGMENT_TEMPLATES
+
+    def test_acknowledgment_spanish(self):
+        from app.prompts.conversation_prompts import get_acknowledgment_for_language
+        result = get_acknowledgment_for_language("es")
+        assert len(result) > 0
+        assert "Gracias" in result[0]
+
+    def test_acknowledgment_unknown_falls_back(self):
+        from app.prompts.conversation_prompts import get_acknowledgment_for_language, ACKNOWLEDGMENT_TEMPLATES
+        assert get_acknowledgment_for_language("xx") == ACKNOWLEDGMENT_TEMPLATES
+
+    def test_emergency_spanish(self):
+        from app.prompts.conversation_prompts import get_emergency_for_language
+        result = get_emergency_for_language("es")
+        assert "911" in result
+        assert "emergencia" in result or "atencion" in result
+
+    def test_emergency_french(self):
+        from app.prompts.conversation_prompts import get_emergency_for_language
+        result = get_emergency_for_language("fr")
+        assert "SAMU" in result or "urgences" in result
+
+    def test_summary_spanish(self):
+        from app.prompts.conversation_prompts import get_summary_for_language
+        result = get_summary_for_language("es")
+        assert "Gracias" in result
+
+    def test_summary_unknown_falls_back(self):
+        from app.prompts.conversation_prompts import get_summary_for_language, SUMMARY_INTRO
+        assert get_summary_for_language("xx") == SUMMARY_INTRO
+
+    def test_dialogue_manager_language_init(self):
+        dm = DialogueManager(language="fr")
+        assert dm.session.language == "fr"
+
+    def test_session_language_field(self):
+        session = ConversationSessionData(language="de")
+        assert session.language == "de"
+
+    def test_language_prefix_normalization(self):
+        from app.prompts.conversation_prompts import get_greeting_for_language
+        # "es-MX" should match "es"
+        greeting = get_greeting_for_language("es-MX")
+        assert "Hola" in greeting
+
+
+# =====================================================
+# Phase 3: Language Detection Tests
+# =====================================================
+
+class TestLanguageDetection:
+    @pytest.mark.asyncio
+    async def test_detect_chinese(self):
+        dm = DialogueManager()
+        result = await dm._detect_language("我头痛得厉害，已经三天了")
+        assert result == "zh"
+
+    @pytest.mark.asyncio
+    async def test_detect_arabic(self):
+        dm = DialogueManager()
+        result = await dm._detect_language("أعاني من صداع شديد منذ ثلاثة أيام")
+        assert result == "ar"
+
+    @pytest.mark.asyncio
+    async def test_detect_hindi(self):
+        dm = DialogueManager()
+        result = await dm._detect_language("मुझे तीन दिनों से सिरदर्द हो रहा है")
+        assert result == "hi"
+
+    @pytest.mark.asyncio
+    async def test_detect_spanish(self):
+        dm = DialogueManager()
+        result = await dm._detect_language("tengo dolor de cabeza desde hace tres dias")
+        assert result == "es"
+
+    @pytest.mark.asyncio
+    async def test_detect_french(self):
+        dm = DialogueManager()
+        result = await dm._detect_language("j'ai mal à la tête depuis trois jours")
+        assert result == "fr"
+
+    @pytest.mark.asyncio
+    async def test_detect_german(self):
+        dm = DialogueManager()
+        result = await dm._detect_language("ich habe seit drei Tagen Kopfschmerzen")
+        assert result == "de"
+
+    @pytest.mark.asyncio
+    async def test_short_text_returns_none(self):
+        dm = DialogueManager()
+        result = await dm._detect_language("hi")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_empty_text_returns_none(self):
+        dm = DialogueManager()
+        result = await dm._detect_language("")
+        assert result is None
+
+
+# =====================================================
+# Phase 3: VAD Service Tests
+# =====================================================
+
+class TestVADService:
+    def test_vad_singleton(self):
+        from app.models.vad_service import get_vad_service
+        vad1 = get_vad_service()
+        vad2 = get_vad_service()
+        assert vad1 is vad2
+
+    def test_energy_probability_silence(self):
+        from app.models.vad_service import VADService
+        import numpy as np
+        vad = VADService()
+        # Near-silence audio
+        silent = np.zeros(512, dtype=np.float32)
+        prob = vad._energy_probability(silent)
+        assert prob == 0.0
+
+    def test_energy_probability_speech(self):
+        from app.models.vad_service import VADService
+        import numpy as np
+        vad = VADService()
+        # Simulated speech (moderate energy)
+        speech = np.random.randn(512).astype(np.float32) * 0.1
+        prob = vad._energy_probability(speech)
+        assert prob > 0.0
+
+    def test_energy_probability_empty(self):
+        from app.models.vad_service import VADService
+        import numpy as np
+        vad = VADService()
+        empty = np.array([], dtype=np.float32)
+        assert vad._energy_probability(empty) == 0.0
+
+    def test_process_frame_returns_dict(self):
+        from app.models.vad_service import VADService
+        import numpy as np
+        vad = VADService()
+        vad._loaded = True  # Skip model loading
+        audio = np.zeros(512, dtype=np.float32)
+        result = vad.process_frame(audio)
+        assert "is_speech" in result
+        assert "speech_prob" in result
+        assert "turn_ended" in result
+        assert "barge_in" in result
+        assert "speech_duration_ms" in result
+        assert "silence_duration_ms" in result
+
+    def test_reset(self):
+        from app.models.vad_service import VADService
+        vad = VADService()
+        vad._speech_started = True
+        vad._silence_start = 1.0
+        vad.reset()
+        assert vad._speech_started is False
+        assert vad._silence_start is None
+
+    def test_smoothed_probability_empty(self):
+        from app.models.vad_service import VADService
+        vad = VADService()
+        assert vad.get_smoothed_probability() == 0.0
+
+
+# =====================================================
+# Phase 3: TTS Service Tests
+# =====================================================
+
+class TestTTSService:
+    def test_tts_singleton(self):
+        from app.models.tts_service import get_tts_service
+        tts1 = get_tts_service()
+        tts2 = get_tts_service()
+        assert tts1 is tts2
+
+    def test_cache_size_initially_zero(self):
+        from app.models.tts_service import PiperTTSService
+        tts = PiperTTSService()
+        assert tts.cache_size == 0
+
+    def test_synthesize_empty_text(self):
+        from app.models.tts_service import PiperTTSService
+        tts = PiperTTSService()
+        tts._loaded = True  # Skip model loading
+        assert tts.synthesize("") is None
+        assert tts.synthesize("   ") is None
+
+    def test_synthesize_cached_stores_short_text(self):
+        from app.models.tts_service import PiperTTSService
+        tts = PiperTTSService()
+        tts._loaded = True
+        # synthesize_cached with no model returns None but doesn't crash
+        result = tts.synthesize_cached("Hello")
+        assert result is None  # No model loaded
+        assert tts.cache_size == 0  # Nothing cached since synthesis returned None
+
+    def test_voice_model_lookup(self):
+        from app.models.tts_service import PiperTTSService
+        tts = PiperTTSService()
+        tts._voice_models = {"es": "./models/piper/es_ES-test.onnx"}
+        assert tts.get_voice_for_language("es") == "./models/piper/es_ES-test.onnx"
+        assert tts.get_voice_for_language("es-MX") == "./models/piper/es_ES-test.onnx"
+        assert tts.get_voice_for_language("fr") is None
+
+    def test_pcm_to_wav(self):
+        from app.models.tts_service import PiperTTSService
+        import struct
+        tts = PiperTTSService()
+        # Create minimal PCM data (4 samples of silence)
+        pcm_data = struct.pack("<4h", 0, 0, 0, 0)
+        wav = tts._pcm_to_wav(pcm_data)
+        assert wav is not None
+        assert wav[:4] == b"RIFF"  # WAV header
