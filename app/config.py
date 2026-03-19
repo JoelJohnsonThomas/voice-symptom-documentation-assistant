@@ -102,6 +102,15 @@ class Settings(BaseSettings):
     icd10_similarity_threshold: float = 0.60
     drug_interaction_check_enabled: bool = True    # Auto-check medication interactions
 
+    # Multi-Tenancy & Isolation (Phase 3)
+    multi_tenancy_enabled: bool = False
+    default_organization_id: str = "default"
+    default_provider_id: str = "system"
+
+    # RAG Security (Phase 3)
+    rag_audit_enabled: bool = True                # Log every RAG retrieval for HIPAA
+    rag_vector_store_encryption_enabled: bool = False  # Encrypt vector store at rest
+
     # Logging
     log_level: str = "INFO"
     

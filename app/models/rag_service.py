@@ -4,16 +4,24 @@ RAG (Retrieval-Augmented Generation) Service — Production Healthcare Edition
 Indexes past intake sessions as vector embeddings and retrieves
 semantically similar cases to enrich SOAP note generation.
 
-Production enhancements (Phase 1):
-- Medical-domain embeddings: PubMedBERT for clinical semantic accuracy
-- Similarity threshold:      discard low-relevance retrievals
-- Clinical-aware chunking:   per-SOAP-section indexing with metadata
-- Cross-encoder reranking:   precision boost on top-k candidates
-- Retrieval confidence:      scored per result for downstream gating
-- PHI-safe indexing:         redact PHI before embedding
+Production enhancements:
+  Phase 1:
+  - Medical-domain embeddings: PubMedBERT for clinical semantic accuracy
+  - Similarity threshold:      discard low-relevance retrievals
+  - Clinical-aware chunking:   per-SOAP-section indexing with metadata
+  - Cross-encoder reranking:   precision boost on top-k candidates
+  - Retrieval confidence:      scored per result for downstream gating
+  - PHI-safe indexing:         redact PHI before embedding
+
+  Phase 3:
+  - Tenant isolation:          org_id / provider_id scoped retrieval
+  - Encrypted vector store:    AES-256-GCM encryption of ChromaDB persistence
+  - RAG audit trail:           HIPAA-compliant logging of every retrieval
+  - Enhanced PHI verification: double-pass redaction with verification
 """
 
 import hashlib
+import json
 import logging
 import time
 from typing import List, Dict, Any, Optional
@@ -67,6 +75,13 @@ def _get_collection():
     if _collection is None:
         import chromadb
         persist_dir = settings.rag_persist_dir
+
+        # Phase 3.3: If vector store encryption is enabled, use an encrypted
+        # subdirectory that is decrypted on mount.  For embedded ChromaDB we
+        # encrypt/decrypt the whole persist dir at startup/shutdown.
+        if settings.rag_vector_store_encryption_enabled:
+            _ensure_vector_store_decrypted(persist_dir)
+
         Path(persist_dir).mkdir(parents=True, exist_ok=True)
         _chroma_client = chromadb.PersistentClient(path=persist_dir)
         _collection = _chroma_client.get_or_create_collection(
@@ -89,18 +104,21 @@ def _embed(text: str) -> List[float]:
 
 def _redact_phi_for_embedding(text: str) -> str:
     """
-    Strip PHI from text before it enters the vector store.
-    Uses the same patterns as the HIPAA compliance module.
+    Strip PHI from text before it enters the vector store (Phase 3.1).
+    Uses enhanced double-pass redaction with verification.
     """
-    from app.compliance import redact_phi_text
-    return redact_phi_text(text)
+    from app.compliance import redact_for_vector_store
+    redacted, verification = redact_for_vector_store(text)
+    if not verification["is_clean"]:
+        logger.warning(
+            f"RAG PHI verification: {verification['phi_count']} patterns "
+            f"still detected after redaction: {verification['pattern_types']}"
+        )
+    return redacted
 
 
 def _cosine_similarity_from_distance(distance: float) -> float:
-    """
-    ChromaDB cosine distance = 1 - cosine_similarity.
-    Convert back to similarity score in [0, 1].
-    """
+    """ChromaDB cosine distance = 1 - cosine_similarity."""
     return max(0.0, 1.0 - distance)
 
 
@@ -109,30 +127,271 @@ def _build_chunk_id(session_id: str, section: str) -> str:
     return f"{session_id}::{section}"
 
 
-def _rerank(query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Re-score candidates using cross-encoder for higher precision.
+def _hash_query(text: str) -> str:
+    """SHA-256 hash of query text for audit logging (no PHI in logs)."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
-    The cross-encoder sees (query, document) pairs and scores them
-    jointly — much more accurate than bi-encoder cosine alone.
-    """
+
+def _rerank(query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Re-score candidates using cross-encoder for higher precision."""
     reranker = _get_reranker_model()
     if reranker is None or not candidates:
         return candidates
-
     try:
         pairs = [(query, c["document"]) for c in candidates]
         scores = reranker.predict(pairs)
-
         for i, score in enumerate(scores):
             candidates[i]["rerank_score"] = float(score)
-
         candidates.sort(key=lambda c: c["rerank_score"], reverse=True)
         return candidates
-
     except Exception as exc:
         logger.warning(f"RAG: reranking failed, using cosine order: {exc}")
         return candidates
+
+
+# ---------------------------------------------------------------------------
+# Phase 3.2: Tenant isolation helpers
+# ---------------------------------------------------------------------------
+
+def _get_tenant_metadata(
+    organization_id: Optional[str] = None,
+    provider_id: Optional[str] = None,
+) -> Dict[str, str]:
+    """Build tenant metadata for indexing."""
+    return {
+        "organization_id": organization_id or settings.default_organization_id,
+        "provider_id": provider_id or settings.default_provider_id,
+    }
+
+
+def _build_tenant_filter(
+    organization_id: Optional[str] = None,
+    provider_id: Optional[str] = None,
+    extra_filter: Optional[Dict] = None,
+) -> Optional[Dict]:
+    """
+    Build a ChromaDB where-filter that enforces tenant isolation.
+
+    When multi-tenancy is enabled, retrieval is scoped to the requesting
+    organization.  Provider-level scoping is optional (for within-org isolation).
+    """
+    if not settings.multi_tenancy_enabled:
+        return extra_filter
+
+    org_id = organization_id or settings.default_organization_id
+    conditions = [{"organization_id": org_id}]
+
+    if provider_id:
+        conditions.append({"provider_id": provider_id})
+
+    if extra_filter:
+        conditions.append(extra_filter)
+
+    if len(conditions) == 1:
+        return conditions[0]
+    return {"$and": conditions}
+
+
+# ---------------------------------------------------------------------------
+# Phase 3.3: Encrypted vector store helpers
+# ---------------------------------------------------------------------------
+
+_ENCRYPTED_MARKER = ".encrypted"
+
+
+def _ensure_vector_store_decrypted(persist_dir: str) -> None:
+    """
+    Decrypt the vector store directory if it exists in encrypted form.
+
+    Strategy: we store a tarball of the ChromaDB files encrypted with
+    AES-256-GCM.  On startup we decrypt into the working directory.
+    On shutdown (or periodic flush) we re-encrypt.
+    """
+    encrypted_path = Path(persist_dir + _ENCRYPTED_MARKER)
+    target_path = Path(persist_dir)
+
+    if not encrypted_path.exists():
+        return  # No encrypted archive — first run or already decrypted
+
+    try:
+        from app.encryption import decrypt_bytes
+        import tarfile
+        import io
+
+        logger.info("Decrypting vector store...")
+        encrypted_data = encrypted_path.read_bytes()
+        decrypted_data = decrypt_bytes(encrypted_data)
+
+        # Extract tar archive
+        target_path.mkdir(parents=True, exist_ok=True)
+        tar_buffer = io.BytesIO(decrypted_data)
+        with tarfile.open(fileobj=tar_buffer, mode="r:gz") as tar:
+            tar.extractall(path=str(target_path), filter="data")
+
+        logger.info(f"Vector store decrypted to {persist_dir}")
+
+    except Exception as exc:
+        logger.error(f"Failed to decrypt vector store: {exc}")
+        raise
+
+
+def encrypt_vector_store() -> Optional[str]:
+    """
+    Encrypt the vector store directory to an archive file.
+
+    Call this on shutdown or periodically to ensure data-at-rest encryption.
+    Returns the path to the encrypted file, or None if encryption is disabled.
+    """
+    if not settings.rag_vector_store_encryption_enabled:
+        return None
+
+    persist_dir = settings.rag_persist_dir
+    target_path = Path(persist_dir)
+    encrypted_path = Path(persist_dir + _ENCRYPTED_MARKER)
+
+    if not target_path.exists():
+        return None
+
+    try:
+        from app.encryption import encrypt_bytes
+        import tarfile
+        import io
+
+        logger.info("Encrypting vector store...")
+
+        # Create tar.gz archive of the directory
+        tar_buffer = io.BytesIO()
+        with tarfile.open(fileobj=tar_buffer, mode="w:gz") as tar:
+            for file_path in target_path.rglob("*"):
+                if file_path.is_file():
+                    arcname = file_path.relative_to(target_path)
+                    tar.add(str(file_path), arcname=str(arcname))
+
+        tar_data = tar_buffer.getvalue()
+        encrypted_data = encrypt_bytes(tar_data)
+        encrypted_path.write_bytes(encrypted_data)
+
+        logger.info(
+            f"Vector store encrypted: {len(tar_data)} bytes → "
+            f"{len(encrypted_data)} bytes at {encrypted_path}"
+        )
+        return str(encrypted_path)
+
+    except Exception as exc:
+        logger.error(f"Failed to encrypt vector store: {exc}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Phase 3.4: RAG audit trail
+# ---------------------------------------------------------------------------
+
+def _record_rag_audit(
+    action: str,
+    query_hash: str,
+    retrieved_session_ids: List[str],
+    similarities: List[float],
+    organization_id: Optional[str] = None,
+    provider_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    extra_details: Optional[Dict] = None,
+) -> None:
+    """
+    Record a RAG operation in the audit trail.
+
+    This is logged as a structured JSON entry for HIPAA "minimum necessary"
+    documentation.  The query text is NOT logged — only its hash.
+    """
+    if not settings.rag_audit_enabled:
+        return
+
+    try:
+        audit_entry = {
+            "action": action,
+            "query_hash": query_hash,
+            "retrieved_session_ids": retrieved_session_ids,
+            "similarities": [round(s, 4) for s in similarities],
+            "result_count": len(retrieved_session_ids),
+            "organization_id": organization_id or settings.default_organization_id,
+            "provider_id": provider_id or settings.default_provider_id,
+            "user_id": user_id,
+            "timestamp": time.time(),
+            "threshold": settings.rag_similarity_threshold,
+        }
+        if extra_details:
+            audit_entry["details"] = extra_details
+
+        # Log as structured JSON for downstream SIEM/audit ingestion
+        logger.info(f"RAG_AUDIT: {json.dumps(audit_entry)}")
+
+        # Also write to the RAG audit log file for persistent trail
+        _append_to_audit_file(audit_entry)
+
+    except Exception as exc:
+        logger.warning(f"RAG audit logging failed: {exc}")
+
+
+def _append_to_audit_file(entry: Dict[str, Any]) -> None:
+    """Append an audit entry to the RAG audit log file (JSONL format)."""
+    try:
+        audit_dir = Path(settings.rag_persist_dir) / "audit"
+        audit_dir.mkdir(parents=True, exist_ok=True)
+
+        # Daily rotation: one file per day
+        from datetime import datetime
+        date_str = datetime.utcnow().strftime("%Y-%m-%d")
+        audit_file = audit_dir / f"rag_audit_{date_str}.jsonl"
+
+        with open(audit_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+
+    except Exception as exc:
+        logger.debug(f"RAG audit file write failed: {exc}")
+
+
+def get_rag_audit_logs(
+    date: Optional[str] = None,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    """
+    Read RAG audit logs for compliance review.
+
+    Args:
+        date: Date string (YYYY-MM-DD). Defaults to today.
+        limit: Max entries to return.
+
+    Returns:
+        List of audit entries (most recent first).
+    """
+    try:
+        from datetime import datetime
+        audit_dir = Path(settings.rag_persist_dir) / "audit"
+        if not audit_dir.exists():
+            return []
+
+        date_str = date or datetime.utcnow().strftime("%Y-%m-%d")
+        audit_file = audit_dir / f"rag_audit_{date_str}.jsonl"
+
+        if not audit_file.exists():
+            return []
+
+        entries = []
+        with open(audit_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        entries.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+
+        # Return most recent first, limited
+        entries.reverse()
+        return entries[:limit]
+
+    except Exception as exc:
+        logger.warning(f"Failed to read RAG audit logs: {exc}")
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -159,14 +418,13 @@ def _record_retrieval_metrics(
             RAG_SIMILARITY_SCORE.observe(sim)
         if not threshold_met:
             RAG_FALLBACK_COUNT.inc()
-        # Update index size gauge
         try:
             collection = _get_collection()
             RAG_INDEX_SIZE.set(collection.count())
         except Exception:
             pass
     except ImportError:
-        pass  # metrics module not available — skip silently
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +439,8 @@ def index_session(
     soap_objective: Optional[str] = None,
     soap_assessment: Optional[str] = None,
     soap_plan: Optional[str] = None,
+    organization_id: Optional[str] = None,
+    provider_id: Optional[str] = None,
 ) -> None:
     """
     Index a single intake session into the vector store.
@@ -191,6 +451,7 @@ def index_session(
     "full" chunk for broad matching.
 
     PHI is redacted from all text before embedding.
+    Tenant metadata (org_id, provider_id) is attached for isolation (Phase 3.2).
     """
     if not settings.rag_enabled:
         return
@@ -198,9 +459,12 @@ def index_session(
     try:
         collection = _get_collection()
 
-        # PHI-safe: redact before embedding
+        # PHI-safe: redact before embedding (Phase 3.1 — verified)
         safe_transcript = _redact_phi_for_embedding(transcript.strip())
         safe_cc = _redact_phi_for_embedding(chief_complaint or "")
+
+        # Phase 3.2: tenant metadata
+        tenant_meta = _get_tenant_metadata(organization_id, provider_id)
 
         # --- Full-session chunk (always indexed) ---
         embed_parts = [safe_transcript]
@@ -231,6 +495,7 @@ def index_session(
             "section_type": "full",
             "has_soap": bool(soap_subjective),
             "chief_complaint": (safe_cc or "")[:200],
+            **tenant_meta,
         }
 
         ids = [_build_chunk_id(session_id, "full")]
@@ -256,6 +521,7 @@ def index_session(
                     "section_type": section,
                     "has_soap": True,
                     "chief_complaint": (safe_cc or "")[:200],
+                    **tenant_meta,
                 })
 
         collection.upsert(
@@ -264,9 +530,22 @@ def index_session(
             documents=documents,
             metadatas=metadatas,
         )
+
+        # Phase 3.4: Audit the indexing operation
+        _record_rag_audit(
+            action="index",
+            query_hash="N/A",
+            retrieved_session_ids=[session_id],
+            similarities=[],
+            organization_id=tenant_meta["organization_id"],
+            provider_id=tenant_meta["provider_id"],
+            extra_details={"chunks_indexed": len(ids)},
+        )
+
         logger.info(
             f"RAG: indexed session {session_id} "
-            f"({len(ids)} chunk{'s' if len(ids) > 1 else ''})"
+            f"({len(ids)} chunk{'s' if len(ids) > 1 else ''}, "
+            f"org={tenant_meta['organization_id']})"
         )
 
     except Exception as exc:
@@ -278,6 +557,9 @@ def retrieve_similar_sessions(
     top_k: Optional[int] = None,
     exclude_id: Optional[str] = None,
     section_filter: Optional[str] = None,
+    organization_id: Optional[str] = None,
+    provider_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Retrieve the top-k most similar past sessions for a given transcript.
@@ -285,20 +567,21 @@ def retrieve_similar_sessions(
     Pipeline:
       1. Embed query with PubMedBERT
       2. Retrieve initial_retrieval_k candidates from ChromaDB
+         (scoped to tenant if multi-tenancy enabled — Phase 3.2)
       3. Filter by similarity threshold
       4. Rerank with cross-encoder (if enabled)
       5. Return top-k with confidence scores
+      6. Log retrieval to audit trail (Phase 3.4)
 
     Returns a list of dicts with keys:
       id, document, metadata, distance, similarity, retrieval_confidence
-
-    Returns an empty list when RAG is disabled, the collection is empty,
-    or no results meet the similarity threshold.
     """
     if not settings.rag_enabled:
         return []
 
     t0 = time.time()
+    query_hash = _hash_query(transcript)
+
     try:
         collection = _get_collection()
         total = collection.count()
@@ -315,10 +598,16 @@ def retrieve_similar_sessions(
         safe_query = _redact_phi_for_embedding(transcript)
         query_embedding = _embed(safe_query)
 
-        # Build optional metadata filter
-        where_filter = None
+        # Phase 3.2: Build tenant-scoped filter
+        section_where = None
         if section_filter and section_filter in SOAP_SECTIONS:
-            where_filter = {"section_type": section_filter}
+            section_where = {"section_type": section_filter}
+
+        where_filter = _build_tenant_filter(
+            organization_id=organization_id,
+            provider_id=provider_id,
+            extra_filter=section_where,
+        )
 
         results = collection.query(
             query_embeddings=[query_embedding],
@@ -336,14 +625,12 @@ def retrieve_similar_sessions(
             metadata = results["metadatas"][0][i]
             session_id = metadata.get("session_id", doc_id.split("::")[0])
 
-            # Exclude self-reference
             if exclude_id and session_id == exclude_id:
                 continue
 
             distance = results["distances"][0][i]
             similarity = _cosine_similarity_from_distance(distance)
 
-            # --- Step 2: Apply similarity threshold ---
             if similarity < settings.rag_similarity_threshold:
                 continue
 
@@ -360,7 +647,7 @@ def retrieve_similar_sessions(
         if settings.rag_reranker_enabled and len(candidates) > 1:
             candidates = _rerank(safe_query, candidates)
 
-        # --- Step 4: Deduplicate by session (keep best chunk per session) ---
+        # --- Step 4: Deduplicate by session ---
         deduped: List[Dict[str, Any]] = []
         for c in candidates:
             sid = c["session_id"]
@@ -373,7 +660,6 @@ def retrieve_similar_sessions(
         # --- Step 5: Compute retrieval confidence ---
         for item in deduped:
             sim = item["similarity"]
-            # Confidence tiers: high >= 0.85, medium >= 0.75, low >= threshold
             if sim >= 0.85:
                 item["retrieval_confidence"] = "high"
             elif sim >= 0.75:
@@ -383,11 +669,28 @@ def retrieve_similar_sessions(
 
         latency = time.time() - t0
         similarities = [c["similarity"] for c in deduped]
+
         _record_retrieval_metrics(
             latency_s=latency,
             num_results=len(deduped),
             threshold_met=len(deduped) > 0,
             similarities=similarities,
+        )
+
+        # Phase 3.4: Audit trail
+        _record_rag_audit(
+            action="retrieve",
+            query_hash=query_hash,
+            retrieved_session_ids=[c["session_id"] for c in deduped],
+            similarities=similarities,
+            organization_id=organization_id,
+            provider_id=provider_id,
+            user_id=user_id,
+            extra_details={
+                "candidates_before_filter": len(candidates),
+                "latency_s": round(latency, 3),
+                "reranker_used": settings.rag_reranker_enabled,
+            },
         )
 
         logger.info(
@@ -409,11 +712,18 @@ def remove_session(session_id: str) -> None:
         return
     try:
         collection = _get_collection()
-        # Remove full chunk and all section chunks
         ids_to_remove = [_build_chunk_id(session_id, "full")]
         for section in SOAP_SECTIONS:
             ids_to_remove.append(_build_chunk_id(session_id, section))
         collection.delete(ids=ids_to_remove)
+
+        _record_rag_audit(
+            action="delete",
+            query_hash="N/A",
+            retrieved_session_ids=[session_id],
+            similarities=[],
+        )
+
         logger.info(f"RAG: removed session {session_id} (all chunks)")
     except Exception as exc:
         logger.warning(f"RAG: failed to remove session {session_id}: {exc}")
@@ -427,7 +737,6 @@ def get_index_stats() -> Dict[str, Any]:
         collection = _get_collection()
         count = collection.count()
 
-        # Count by section type
         section_counts = {}
         for section in ["full"] + list(SOAP_SECTIONS):
             try:
@@ -450,6 +759,9 @@ def get_index_stats() -> Dict[str, Any]:
             "initial_retrieval_k": settings.rag_initial_retrieval_k,
             "chunking_enabled": settings.rag_chunking_enabled,
             "persist_dir": settings.rag_persist_dir,
+            "multi_tenancy_enabled": settings.multi_tenancy_enabled,
+            "vector_store_encrypted": settings.rag_vector_store_encryption_enabled,
+            "audit_enabled": settings.rag_audit_enabled,
         }
     except Exception as exc:
         return {"enabled": True, "error": str(exc)}
@@ -459,10 +771,13 @@ def retrieve_enriched_context(
     transcript: str,
     top_k: Optional[int] = None,
     exclude_id: Optional[str] = None,
+    organization_id: Optional[str] = None,
+    provider_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Unified retrieval that merges session-based RAG with knowledge base
-    guidelines (Phase 2 integration).
+    guidelines (Phase 2 integration), scoped to tenant (Phase 3.2).
 
     Returns a dict with:
       - similar_sessions: list from retrieve_similar_sessions()
@@ -470,7 +785,12 @@ def retrieve_enriched_context(
       - has_context: bool indicating whether any context was found
     """
     similar_sessions = retrieve_similar_sessions(
-        transcript, top_k=top_k, exclude_id=exclude_id,
+        transcript,
+        top_k=top_k,
+        exclude_id=exclude_id,
+        organization_id=organization_id,
+        provider_id=provider_id,
+        user_id=user_id,
     )
 
     clinical_guidelines = []

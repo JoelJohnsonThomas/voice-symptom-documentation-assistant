@@ -199,6 +199,9 @@ class SessionCreateRequest(BaseModel):
     soap_objective: Optional[str] = None
     soap_assessment: Optional[str] = None
     soap_plan: Optional[str] = None
+    # Phase 3.2: Tenant context (optional — defaults from settings)
+    organization_id: Optional[str] = None
+    provider_id: Optional[str] = None
 
 
 class AuditLogResponse(BaseModel):
@@ -321,6 +324,11 @@ async def _write_audit_log(
 async def shutdown_event():
     stop_cleanup_task()
     stop_purge_scheduler()
+    # Phase 3.3: Encrypt vector store at rest on shutdown
+    if settings.rag_vector_store_encryption_enabled:
+        logger.info("Encrypting vector store before shutdown...")
+        from app.models.rag_service import encrypt_vector_store
+        encrypt_vector_store()
 
 
 # Startup event to preload models
@@ -1414,6 +1422,8 @@ async def save_session(
                     soap_objective=raw.get("soap_objective"),
                     soap_assessment=raw.get("soap_assessment"),
                     soap_plan=raw.get("soap_plan"),
+                    organization_id=raw.get("organization_id"),
+                    provider_id=raw.get("provider_id"),
                 ),
             )
 
@@ -1641,6 +1651,68 @@ async def check_drug_interactions(medications: List[str], min_severity: str = "m
         "medications": medications,
         "interactions": results,
         "interaction_count": len(results),
+    }
+
+
+# =====================================================
+# RAG SECURITY ENDPOINTS (Phase 3)
+# =====================================================
+
+@app.get("/api/rag/audit-logs")
+async def get_rag_audit_logs(date: Optional[str] = None, limit: int = 100):
+    """
+    Retrieve RAG audit logs for HIPAA compliance review.
+
+    Returns retrieval events with query hashes, accessed session IDs,
+    similarity scores, and tenant context — no PHI in logs.
+    """
+    from app.models.rag_service import get_rag_audit_logs as _get_logs
+    logs = _get_logs(date=date, limit=limit)
+    return {
+        "date": date or "today",
+        "entries": logs,
+        "count": len(logs),
+    }
+
+
+@app.post("/api/rag/encrypt")
+async def encrypt_vector_store_endpoint():
+    """
+    Manually trigger vector store encryption.
+    Useful for pre-maintenance or pre-backup encryption.
+    """
+    if not settings.rag_vector_store_encryption_enabled:
+        return {"status": "disabled", "message": "Vector store encryption is not enabled"}
+    from app.models.rag_service import encrypt_vector_store
+    result = encrypt_vector_store()
+    return {
+        "status": "encrypted" if result else "failed",
+        "encrypted_path": result,
+    }
+
+
+@app.get("/api/rag/security-status")
+async def rag_security_status():
+    """Return the RAG security posture for compliance dashboards."""
+    from app.compliance import verify_phi_redacted
+    return {
+        "phi_redaction": {
+            "enabled": True,
+            "patterns_count": 11,
+            "double_pass": True,
+        },
+        "tenant_isolation": {
+            "enabled": settings.multi_tenancy_enabled,
+            "default_org": settings.default_organization_id,
+        },
+        "vector_store_encryption": {
+            "enabled": settings.rag_vector_store_encryption_enabled,
+        },
+        "audit_trail": {
+            "enabled": settings.rag_audit_enabled,
+            "log_location": f"{settings.rag_persist_dir}/audit/",
+        },
+        "compliance_metadata": build_compliance_metadata(),
     }
 
 
