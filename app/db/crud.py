@@ -3,7 +3,7 @@ from sqlalchemy.future import select
 from sqlalchemy import desc
 from typing import List, Optional
 
-from app.db.models import AuditLog, ConversationSession, DataExportLog, IntakeSession, User
+from app.db.models import AuditLog, ConsentRecord, ConversationSession, DataExportLog, IntakeSession, RefreshToken, User
 
 async def create_session(db: AsyncSession, session_data: dict) -> IntakeSession:
     db_session = IntakeSession(
@@ -234,3 +234,166 @@ async def get_export_logs(
 
     result = await db.execute(stmt)
     return result.scalars().all()
+
+
+# =====================================================
+# Refresh Token CRUD (Phase 4)
+# =====================================================
+
+async def create_refresh_token(
+    db: AsyncSession,
+    user_id: str,
+    token_hash: str,
+    expires_at,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> RefreshToken:
+    rt = RefreshToken(
+        user_id=user_id,
+        token_hash=token_hash,
+        expires_at=expires_at,
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
+    db.add(rt)
+    await db.commit()
+    await db.refresh(rt)
+    return rt
+
+
+async def get_refresh_token_by_hash(db: AsyncSession, token_hash: str) -> Optional[RefreshToken]:
+    result = await db.execute(
+        select(RefreshToken).where(
+            RefreshToken.token_hash == token_hash,
+            RefreshToken.revoked == False,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def revoke_refresh_token(db: AsyncSession, token_hash: str) -> bool:
+    rt = await get_refresh_token_by_hash(db, token_hash)
+    if rt:
+        rt.revoked = True
+        await db.commit()
+        return True
+    return False
+
+
+async def revoke_all_user_tokens(db: AsyncSession, user_id: str) -> int:
+    result = await db.execute(
+        select(RefreshToken).where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.revoked == False,
+        )
+    )
+    tokens = result.scalars().all()
+    for t in tokens:
+        t.revoked = True
+    await db.commit()
+    return len(tokens)
+
+
+async def cleanup_expired_tokens(db: AsyncSession) -> int:
+    from datetime import datetime
+    result = await db.execute(
+        select(RefreshToken).where(RefreshToken.expires_at < datetime.utcnow())
+    )
+    expired = result.scalars().all()
+    for t in expired:
+        await db.delete(t)
+    await db.commit()
+    return len(expired)
+
+
+# =====================================================
+# Consent Record CRUD (Phase 4)
+# =====================================================
+
+async def create_consent_record(
+    db: AsyncSession,
+    session_id: str,
+    consent_type: str = "verbal",
+    patient_identifier: Optional[str] = None,
+    recorded_by_user_id: Optional[str] = None,
+    recorded_by_username: Optional[str] = None,
+    details: Optional[str] = None,
+) -> ConsentRecord:
+    record = ConsentRecord(
+        session_id=session_id,
+        consent_type=consent_type,
+        patient_identifier=patient_identifier,
+        recorded_by_user_id=recorded_by_user_id,
+        recorded_by_username=recorded_by_username,
+        details=details,
+    )
+    db.add(record)
+    await db.commit()
+    await db.refresh(record)
+    return record
+
+
+async def get_consent_for_session(db: AsyncSession, session_id: str) -> Optional[ConsentRecord]:
+    result = await db.execute(
+        select(ConsentRecord).where(
+            ConsentRecord.session_id == session_id,
+            ConsentRecord.revoked == False,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def revoke_consent(db: AsyncSession, consent_id: str) -> bool:
+    from datetime import datetime
+    result = await db.execute(
+        select(ConsentRecord).where(ConsentRecord.id == consent_id)
+    )
+    record = result.scalar_one_or_none()
+    if record and not record.revoked:
+        record.revoked = True
+        record.revoked_at = datetime.utcnow()
+        await db.commit()
+        return True
+    return False
+
+
+async def list_consent_records(
+    db: AsyncSession, skip: int = 0, limit: int = 50
+) -> List[ConsentRecord]:
+    result = await db.execute(
+        select(ConsentRecord)
+        .order_by(desc(ConsentRecord.consented_at))
+        .offset(skip)
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+
+# =====================================================
+# User MFA Updates (Phase 4)
+# =====================================================
+
+async def update_user_totp(db: AsyncSession, user_id: str, totp_secret: Optional[str]) -> Optional[User]:
+    from datetime import datetime
+    user = await get_user_by_id(db, user_id)
+    if user:
+        user.totp_secret = totp_secret
+        user.mfa_enrolled_at = datetime.utcnow() if totp_secret else None
+        await db.commit()
+        await db.refresh(user)
+    return user
+
+
+async def deactivate_user(db: AsyncSession, user_id: str) -> bool:
+    user = await get_user_by_id(db, user_id)
+    if user:
+        user.is_active = False
+        await db.commit()
+        return True
+    return False
+
+
+async def count_users(db: AsyncSession) -> int:
+    from sqlalchemy import func
+    result = await db.execute(select(func.count()).select_from(User))
+    return result.scalar() or 0

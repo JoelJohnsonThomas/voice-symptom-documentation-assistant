@@ -40,6 +40,9 @@ class User(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Phase 4: MFA
+    totp_secret = Column(Text, nullable=True)
+    mfa_enrolled_at = Column(DateTime, nullable=True)
 
 
 class AuditLog(Base):
@@ -79,6 +82,36 @@ class ConversationSession(Base):
     accumulated_transcript = Column(Text, nullable=True)
     entities_json = Column(Text, nullable=True)  # JSON of extracted entities
     is_encrypted = Column(Boolean, default=False, nullable=False)
+
+
+class RefreshToken(Base):
+    """Stores hashed refresh tokens for JWT auth."""
+    __tablename__ = "refresh_tokens"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, nullable=False, index=True)
+    token_hash = Column(String, nullable=False, unique=True, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    revoked = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(Text, nullable=True)
+
+
+class ConsentRecord(Base):
+    """Records patient verbal/written consent before intake processing."""
+    __tablename__ = "consent_records"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id = Column(String, nullable=False, index=True)
+    patient_identifier = Column(String, nullable=True)
+    consent_type = Column(String, nullable=False, default="verbal")  # verbal, written, electronic
+    consented_at = Column(DateTime, default=datetime.utcnow)
+    recorded_by_user_id = Column(String, nullable=True)
+    recorded_by_username = Column(String, nullable=True)
+    details = Column(Text, nullable=True)
+    revoked = Column(Boolean, default=False, nullable=False)
+    revoked_at = Column(DateTime, nullable=True)
 
 
 class DataExportLog(Base):

@@ -162,6 +162,17 @@ const state = {
         is_active: true
     },
 
+    // Auth (Phase 4)
+    accessToken: null,
+    refreshToken: null,
+    authEnabled: false,
+    mfaEnabled: false,
+    consentTrackingEnabled: false,
+    sessionTimeoutMinutes: 15,
+    inactivityTimer: null,
+    inactivityWarningTimer: null,
+    tokenRefreshTimer: null,
+
     // PWA State
     deferredInstallPrompt: null,
     isOffline: !navigator.onLine
@@ -212,10 +223,26 @@ function updateAuthUI(message = null) {
 async function apiFetch(url, options = {}) {
     const headers = new Headers(options.headers || {});
 
+    // Inject Bearer token when auth is enabled (Phase 4)
+    if (state.accessToken) {
+        headers.set('Authorization', `Bearer ${state.accessToken}`);
+    }
+
     const response = await fetch(url, {
         ...options,
         headers
     });
+
+    // Auto-refresh token on 401
+    if (response.status === 401 && state.refreshToken && url !== '/api/auth/refresh') {
+        const refreshed = await tryRefreshToken();
+        if (refreshed) {
+            headers.set('Authorization', `Bearer ${state.accessToken}`);
+            return fetch(url, { ...options, headers });
+        }
+        showLoginOverlay();
+        throw new Error('Session expired. Please log in again.');
+    }
 
     if (response.status === 429) {
         const errorData = await response.json().catch(() => ({}));
@@ -393,17 +420,275 @@ function renderMonitoringData(data) {
 }
 
 function requireAuthentication() {
+    if (!state.authEnabled) return true;
+    if (!state.accessToken) {
+        showLoginOverlay();
+        return false;
+    }
     return true;
 }
 
 async function refreshCurrentUser() {
+    if (!state.authEnabled || !state.accessToken) {
+        state.currentUser = { ...LOCAL_USER };
+        updateAuthUI();
+        return true;
+    }
+    try {
+        const resp = await apiFetch('/api/auth/me');
+        if (resp.ok) {
+            state.currentUser = await resp.json();
+            updateAuthUI();
+            return true;
+        }
+    } catch (e) {
+        console.warn('Failed to refresh user:', e);
+    }
     state.currentUser = { ...LOCAL_USER };
     updateAuthUI();
-    return true;
+    return false;
 }
 
-function setupAuth() {
+async function setupAuth() {
+    try {
+        const resp = await fetch('/api/auth/status');
+        if (resp.ok) {
+            const data = await resp.json();
+            state.authEnabled = data.auth_enabled;
+            state.mfaEnabled = data.mfa_enabled;
+            state.sessionTimeoutMinutes = data.session_timeout_minutes || 15;
+            state.consentTrackingEnabled = data.consent_tracking_enabled;
+        }
+    } catch (e) {
+        console.warn('Auth status check failed, assuming disabled:', e);
+        state.authEnabled = false;
+    }
+
+    if (state.authEnabled) {
+        showLoginOverlay();
+        setupInactivityTimer();
+    } else {
+        hideLoginOverlay();
+    }
+
+    // Logout button
+    const logoutBtn = document.getElementById('logoutBtn');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', handleLogout);
+        logoutBtn.classList.toggle('hidden', !state.authEnabled);
+    }
+
     updateAuthUI();
+}
+
+// --- Login overlay ---
+function showLoginOverlay() {
+    const overlay = document.getElementById('loginOverlay');
+    if (overlay) overlay.classList.remove('hidden');
+}
+
+function hideLoginOverlay() {
+    const overlay = document.getElementById('loginOverlay');
+    if (overlay) overlay.classList.add('hidden');
+}
+
+async function handleLogin() {
+    const username = document.getElementById('loginUsername')?.value?.trim();
+    const password = document.getElementById('loginPassword')?.value;
+    const totpCode = document.getElementById('loginTotp')?.value?.trim();
+    const mfaToken = document.getElementById('loginOverlay')?.dataset?.mfaToken;
+    const errorEl = document.getElementById('loginError');
+
+    if (!username || !password) {
+        if (errorEl) errorEl.textContent = 'Username and password required';
+        return;
+    }
+
+    try {
+        const body = { username, password };
+        if (mfaToken && totpCode) {
+            body.mfa_token = mfaToken;
+            body.totp_code = totpCode;
+        } else if (totpCode) {
+            body.totp_code = totpCode;
+        }
+
+        const resp = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+
+        const data = await resp.json();
+
+        if (!resp.ok) {
+            if (errorEl) errorEl.textContent = data.detail || 'Login failed';
+            return;
+        }
+
+        // MFA challenge
+        if (data.mfa_required) {
+            const mfaField = document.getElementById('mfaField');
+            if (mfaField) mfaField.classList.remove('hidden');
+            const overlay = document.getElementById('loginOverlay');
+            if (overlay) overlay.dataset.mfaToken = data.mfa_token;
+            if (errorEl) errorEl.textContent = 'Enter your authenticator code';
+            return;
+        }
+
+        // Success
+        state.accessToken = data.access_token;
+        state.refreshToken = data.refresh_token;
+        state.currentUser = data.user;
+        hideLoginOverlay();
+        updateAuthUI();
+        scheduleTokenRefresh();
+        resetInactivityTimer();
+
+        // Clear form
+        if (document.getElementById('loginPassword')) document.getElementById('loginPassword').value = '';
+        if (document.getElementById('loginTotp')) document.getElementById('loginTotp').value = '';
+        if (errorEl) errorEl.textContent = '';
+    } catch (e) {
+        if (errorEl) errorEl.textContent = 'Connection error';
+        console.error('Login error:', e);
+    }
+}
+
+async function handleLogout() {
+    if (state.refreshToken) {
+        try {
+            await apiFetch('/api/auth/logout', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ refresh_token: state.refreshToken }),
+            });
+        } catch (e) {
+            console.warn('Logout request failed:', e);
+        }
+    }
+    state.accessToken = null;
+    state.refreshToken = null;
+    state.currentUser = { ...LOCAL_USER };
+    clearTimeout(state.tokenRefreshTimer);
+    updateAuthUI();
+    if (state.authEnabled) showLoginOverlay();
+}
+
+async function tryRefreshToken() {
+    if (!state.refreshToken) return false;
+    try {
+        const resp = await fetch('/api/auth/refresh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh_token: state.refreshToken }),
+        });
+        if (resp.ok) {
+            const data = await resp.json();
+            state.accessToken = data.access_token;
+            scheduleTokenRefresh();
+            return true;
+        }
+    } catch (e) {
+        console.warn('Token refresh failed:', e);
+    }
+    return false;
+}
+
+function scheduleTokenRefresh() {
+    clearTimeout(state.tokenRefreshTimer);
+    // Refresh 2 minutes before expiry
+    const refreshMs = Math.max((state.sessionTimeoutMinutes - 2) * 60 * 1000, 60000);
+    state.tokenRefreshTimer = setTimeout(async () => {
+        const ok = await tryRefreshToken();
+        if (!ok && state.authEnabled) showLoginOverlay();
+    }, refreshMs);
+}
+
+// --- Inactivity timeout ---
+function setupInactivityTimer() {
+    const events = ['mousemove', 'keydown', 'touchstart', 'scroll', 'click'];
+    events.forEach(evt =>
+        document.addEventListener(evt, resetInactivityTimer, { passive: true })
+    );
+    resetInactivityTimer();
+}
+
+function resetInactivityTimer() {
+    clearTimeout(state.inactivityTimer);
+    clearTimeout(state.inactivityWarningTimer);
+    hideTimeoutWarning();
+
+    if (!state.authEnabled || !state.accessToken) return;
+
+    const timeoutMs = state.sessionTimeoutMinutes * 60 * 1000;
+    const warningMs = Math.max(timeoutMs - 120000, 0); // Warn 2 min before
+
+    state.inactivityWarningTimer = setTimeout(showTimeoutWarning, warningMs);
+    state.inactivityTimer = setTimeout(() => {
+        hideTimeoutWarning();
+        handleLogout();
+    }, timeoutMs);
+}
+
+function showTimeoutWarning() {
+    const banner = document.getElementById('timeoutWarning');
+    if (banner) banner.classList.remove('hidden');
+}
+
+function hideTimeoutWarning() {
+    const banner = document.getElementById('timeoutWarning');
+    if (banner) banner.classList.add('hidden');
+}
+
+// --- Consent dialog ---
+async function checkAndRecordConsent(sessionId) {
+    if (!state.consentTrackingEnabled) return true;
+
+    // Check existing consent
+    try {
+        const resp = await apiFetch(`/api/auth/consent/${sessionId}`);
+        if (resp.ok) {
+            const data = await resp.json();
+            if (data.has_consent) return true;
+        }
+    } catch (e) { /* proceed to ask */ }
+
+    // Show consent dialog
+    return new Promise((resolve) => {
+        const dialog = document.getElementById('consentDialog');
+        if (!dialog) { resolve(true); return; }
+
+        dialog.classList.remove('hidden');
+        const yesBtn = document.getElementById('consentYes');
+        const noBtn = document.getElementById('consentNo');
+
+        const cleanup = () => {
+            dialog.classList.add('hidden');
+            yesBtn?.removeEventListener('click', onYes);
+            noBtn?.removeEventListener('click', onNo);
+        };
+
+        const onYes = async () => {
+            cleanup();
+            try {
+                await apiFetch('/api/auth/consent/record', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id: sessionId, consent_type: 'verbal' }),
+                });
+                resolve(true);
+            } catch (e) {
+                console.error('Consent recording failed:', e);
+                resolve(false);
+            }
+        };
+
+        const onNo = () => { cleanup(); resolve(false); };
+
+        yesBtn?.addEventListener('click', onYes);
+        noBtn?.addEventListener('click', onNo);
+    });
 }
 
 // =====================================================
@@ -789,7 +1074,7 @@ function setupNeuralGraph() {
 // =====================================================
 async function init() {
     setupNavigation();
-    setupAuth();
+    await setupAuth();
     setupRecording();
     setupTextInput();
     setupImageUpload();
@@ -801,6 +1086,25 @@ async function init() {
     await loadSessionHistory();
     setupPDFExport();
     setupPWA();
+    setupLoginForm();
+}
+
+function setupLoginForm() {
+    const loginBtn = document.getElementById('loginBtn');
+    if (loginBtn) loginBtn.addEventListener('click', handleLogin);
+    // Allow Enter key in login form
+    const loginPassword = document.getElementById('loginPassword');
+    if (loginPassword) {
+        loginPassword.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') handleLogin();
+        });
+    }
+    const loginTotp = document.getElementById('loginTotp');
+    if (loginTotp) {
+        loginTotp.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') handleLogin();
+        });
+    }
 }
 
 // =====================================================

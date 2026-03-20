@@ -76,7 +76,8 @@ from app.data_retention import (
     start_purge_scheduler,
     stop_purge_scheduler,
 )
-from app.auth import SYSTEM_USER, UserRole, require_roles, ALL_ROLES, INTAKE_AND_UP_ROLES
+from app.auth import SYSTEM_USER, UserRole, require_roles, ALL_ROLES, INTAKE_AND_UP_ROLES, get_current_user
+from app.routes.auth_routes import router as auth_router
 from app.models.medasr_service import get_medasr_service
 from app.models.medgemma_service import get_medgemma_service
 from app.models.ner_service import get_ner_service
@@ -106,14 +107,53 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS middleware
+# CORS middleware — configurable origins (Phase 4)
+_cors_origins = [o.strip() for o in settings.cors_allowed_origins.split(",")]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Auth routes (Phase 4)
+app.include_router(auth_router)
+
+
+# Security headers middleware (Phase 4)
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if settings.auth_enabled:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+
+# Populate current user for rate limiter per-user keying (Phase 4)
+@app.middleware("http")
+async def populate_current_user_middleware(request: Request, call_next):
+    if settings.auth_enabled:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            try:
+                from app.auth import decode_token
+                from app.db import crud as _crud
+                from app.db.database import AsyncSessionLocal
+                token = auth_header.split(" ", 1)[1]
+                payload = decode_token(token)
+                if payload.get("type") == "access":
+                    async with AsyncSessionLocal() as db:
+                        user = await _crud.get_user_by_id(db, payload["sub"])
+                        if user:
+                            request.state.current_user = user
+            except Exception:
+                pass
+    response = await call_next(request)
+    return response
 
 # Mount static files
 static_path = Path(__file__).parent / "static"
@@ -236,6 +276,23 @@ def _extract_client_ip(request: Request) -> Optional[str]:
     if request.client:
         return request.client.host
     return None
+
+
+async def _check_consent_if_required(session_id: str):
+    """Check consent is recorded for a session when consent tracking is enabled.
+
+    Raises HTTP 428 (Precondition Required) if consent is missing.
+    """
+    if not settings.consent_tracking_enabled:
+        return
+    async with AsyncSessionLocal() as db:
+        record = await crud.get_consent_for_session(db, session_id)
+        if not record or record.revoked:
+            raise HTTPException(
+                status_code=428,
+                detail="Patient consent required before intake processing. "
+                       "Record consent via POST /api/auth/consent/record first.",
+            )
 
 
 def _derive_audit_resource(path: str) -> tuple[str, Optional[str]]:

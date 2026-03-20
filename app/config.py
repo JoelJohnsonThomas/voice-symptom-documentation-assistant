@@ -148,6 +148,17 @@ class Settings(BaseSettings):
     conversation_default_language: str = "en"
     piper_voice_models: str = ""       # JSON map: {"es": "./models/piper/es_ES-...", ...}
 
+    # Phase 4: Authentication & Security
+    auth_enabled: bool = False                    # False = dev mode (current stub behavior)
+    jwt_secret_key: str = "CHANGE_ME_IN_PRODUCTION"
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 30
+    jwt_refresh_token_expire_days: int = 7
+    mfa_enabled: bool = False                     # TOTP MFA for provider/admin roles
+    session_inactivity_timeout_minutes: int = 15  # Frontend inactivity timer
+    consent_tracking_enabled: bool = True         # Require verbal consent before intake
+    cors_allowed_origins: str = "*"               # Comma-separated origins; "*" for dev
+
     # Logging
     log_level: str = "INFO"
     
