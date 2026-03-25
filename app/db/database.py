@@ -1,18 +1,29 @@
+"""Database engine configuration.
+
+Phase 8: Supports PostgreSQL (via asyncpg) alongside SQLite (via aiosqlite).
+Set ``DATABASE_URL`` env var or ``database_url`` in config to switch.
+"""
+
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import declarative_base
 import os
 
 from app.config import settings
 
-# Use SQLite by default for prototype, stored in the local directory
-# In production, this could be a PostgreSQL URL
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./voxdoc.db")
+# Determine database URL — priority: config > env > default SQLite
+_configured_url = settings.database_url or os.getenv("DATABASE_URL", "")
+DATABASE_URL = _configured_url if _configured_url else "sqlite+aiosqlite:///./voxdoc.db"
 
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
-)
+# Engine kwargs differ by backend
+_engine_kwargs: dict = {"echo": False}
+if "sqlite" in DATABASE_URL:
+    _engine_kwargs["connect_args"] = {"check_same_thread": False}
+elif "postgresql" in DATABASE_URL:
+    _engine_kwargs["pool_size"] = 10
+    _engine_kwargs["max_overflow"] = 20
+    _engine_kwargs["pool_pre_ping"] = True
+
+engine = create_async_engine(DATABASE_URL, **_engine_kwargs)
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,

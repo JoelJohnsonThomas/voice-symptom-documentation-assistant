@@ -454,6 +454,16 @@ async def startup_event():
                 f"interval: {settings.auto_purge_interval_hours}h)"
             )
 
+        # Phase 8: Colab environment setup
+        if settings.colab_mode:
+            from app.colab_utils import setup_colab_environment, start_ngrok_tunnel
+            colab_changes = setup_colab_environment()
+            logger.info(f"Colab environment configured: {colab_changes}")
+            if settings.colab_ngrok_token:
+                ngrok_url = await start_ngrok_tunnel(settings.api_port)
+                if ngrok_url:
+                    logger.info(f"Ngrok tunnel: {ngrok_url}")
+
     except Exception as e:
         logger.error(f"Model preload failed: {e}")
         # Don't crash - allow lazy loading as fallback
@@ -1823,6 +1833,69 @@ async def fhir_push(
 
 
 # =====================================================
+# PHASE 7: HL7v2 & CCDA EXPORT ENDPOINTS
+# =====================================================
+
+@app.post("/api/hl7v2/adt")
+async def export_hl7v2_adt(request: FHIRExportRequest):
+    """Generate an HL7 v2 ADT^A04 message for legacy EHR systems."""
+    fhir = get_fhir_service()
+    message = fhir.build_hl7v2_adt(
+        documentation=request.documentation,
+        entities=request.extracted_entities,
+        patient_info=request.patient_info,
+    )
+    return {"format": "HL7v2", "message_type": "ADT^A04", "message": message}
+
+
+@app.post("/api/hl7v2/oru")
+async def export_hl7v2_oru(request: FHIRExportRequest):
+    """Generate an HL7 v2 ORU^R01 message with SOAP note observations."""
+    fhir = get_fhir_service()
+    message = fhir.build_hl7v2_oru(
+        documentation=request.documentation,
+        entities=request.extracted_entities,
+        patient_info=request.patient_info,
+    )
+    return {"format": "HL7v2", "message_type": "ORU^R01", "message": message}
+
+
+@app.post("/api/ccda/export")
+async def export_ccda(request: FHIRExportRequest):
+    """Generate a CCD (C-CDA) XML document for hospital interoperability."""
+    from fastapi.responses import Response
+    fhir = get_fhir_service()
+    xml = fhir.build_ccda_document(
+        documentation=request.documentation,
+        entities=request.extracted_entities,
+        patient_info=request.patient_info,
+    )
+    return Response(content=xml, media_type="application/xml")
+
+
+class WebhookRequest(BaseModel):
+    webhook_url: str
+    event_type: str = "session.finalized"
+    payload: dict
+    auth_token: Optional[str] = None
+
+
+@app.post("/api/webhooks/send")
+async def send_webhook(request: WebhookRequest):
+    """Send a webhook notification to an external system."""
+    fhir = get_fhir_service()
+    result = await fhir.send_webhook(
+        webhook_url=request.webhook_url,
+        event_type=request.event_type,
+        payload=request.payload,
+        auth_token=request.auth_token,
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=502, detail=result.get("error", "Webhook delivery failed"))
+    return result
+
+
+# =====================================================
 # HIPAA COMPLIANCE ENDPOINTS
 # =====================================================
 
@@ -2358,6 +2431,272 @@ async def rag_drift_reset():
     Call after re-indexing or embedding model updates.
     """
     return rag_evaluation_service.reset_drift_baseline()
+
+
+# =====================================================
+# Phase 10: Batch Processing & Session Linking Endpoints
+# =====================================================
+
+class BatchSubmitRequest(BaseModel):
+    filenames: List[str]
+    linked_session_id: Optional[str] = None
+
+
+class SessionLinkRequest(BaseModel):
+    parent_session_id: str
+    child_session_id: str
+
+
+@app.post("/api/batch/submit")
+async def batch_submit(req: BatchSubmitRequest):
+    """Create a batch processing job for multiple audio files."""
+    from app.batch_processor import get_batch_processor
+    processor = get_batch_processor()
+    job = processor.create_job(req.filenames, req.linked_session_id)
+    return {"batch_id": job.batch_id, "items": len(job.items), "status": job.status}
+
+
+@app.get("/api/batch/{batch_id}")
+async def batch_status(batch_id: str):
+    """Get batch job status and progress."""
+    from app.batch_processor import get_batch_processor
+    job = get_batch_processor().get_job(batch_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Batch job not found")
+    return {
+        "batch_id": job.batch_id,
+        "status": job.status,
+        "progress": job.progress,
+        "items": [
+            {
+                "item_id": i.item_id,
+                "filename": i.filename,
+                "status": i.status,
+                "error": i.error,
+            }
+            for i in job.items
+        ],
+    }
+
+
+@app.post("/api/batch/{batch_id}/cancel")
+async def batch_cancel(batch_id: str):
+    """Cancel a batch job."""
+    from app.batch_processor import get_batch_processor
+    ok = get_batch_processor().cancel_job(batch_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Cannot cancel this job")
+    return {"status": "cancelled"}
+
+
+@app.get("/api/batch")
+async def batch_list(limit: int = 20):
+    """List recent batch jobs."""
+    from app.batch_processor import get_batch_processor
+    return {"jobs": get_batch_processor().list_jobs(limit)}
+
+
+@app.post("/api/sessions/link")
+async def link_sessions(req: SessionLinkRequest):
+    """Link a follow-up session to an original session."""
+    from app.batch_processor import get_session_linker
+    linker = get_session_linker()
+    linker.link(req.parent_session_id, req.child_session_id)
+    return {"status": "linked", "chain": linker.get_chain(req.child_session_id)}
+
+
+@app.get("/api/sessions/{session_id}/chain")
+async def session_chain(session_id: str):
+    """Get the full visit chain for a session (longitudinal view)."""
+    from app.batch_processor import get_session_linker
+    linker = get_session_linker()
+    return {
+        "session_id": session_id,
+        "chain": linker.get_chain(session_id),
+        "parent": linker.get_parent(session_id),
+        "follow_ups": linker.get_follow_ups(session_id),
+    }
+
+
+@app.post("/api/audio/quality-check")
+async def audio_quality_check(file: UploadFile = File(...)):
+    """Check audio quality (SNR, loudness) before processing."""
+    from app.batch_processor import check_audio_quality
+    data = await file.read()
+    return check_audio_quality(data, sample_rate=settings.audio_sample_rate)
+
+
+# =====================================================
+# Phase 9: Observability & Analytics Endpoints
+# =====================================================
+
+class FeedbackRequest(BaseModel):
+    session_id: str
+    field: str           # subjective, objective, assessment, plan
+    rating: int          # 1 = thumbs up, -1 = thumbs down
+    comment: str = ""
+
+
+@app.get("/api/analytics/sessions")
+async def session_analytics_summary():
+    """Return aggregated session analytics."""
+    from app.analytics import get_session_analytics
+    return get_session_analytics().get_summary()
+
+
+@app.post("/api/analytics/feedback")
+async def submit_feedback(req: FeedbackRequest, request: Request):
+    """Submit clinician feedback on a SOAP field."""
+    from app.analytics import get_feedback_collector, SOAPFeedback
+    if req.field not in ("subjective", "objective", "assessment", "plan"):
+        raise HTTPException(status_code=400, detail="field must be subjective/objective/assessment/plan")
+    if req.rating not in (1, -1):
+        raise HTTPException(status_code=400, detail="rating must be 1 or -1")
+    collector = get_feedback_collector()
+    collector.submit(SOAPFeedback(
+        session_id=req.session_id,
+        field=req.field,
+        rating=req.rating,
+        comment=req.comment,
+        provider_id=getattr(request.state, "current_user_id", ""),
+    ))
+    return {"status": "recorded"}
+
+
+@app.get("/api/analytics/feedback/scores")
+async def feedback_scores():
+    """Return satisfaction scores per SOAP field."""
+    from app.analytics import get_feedback_collector
+    return get_feedback_collector().get_field_scores()
+
+
+@app.get("/api/analytics/feedback/recent")
+async def recent_feedback(limit: int = 50):
+    """Return recent feedback entries."""
+    from app.analytics import get_feedback_collector
+    return get_feedback_collector().recent(limit)
+
+
+@app.get("/api/analytics/grafana-dashboard")
+async def grafana_dashboard():
+    """Return importable Grafana dashboard JSON."""
+    from app.analytics import generate_grafana_dashboard
+    return generate_grafana_dashboard()
+
+
+@app.get("/api/audit/export")
+async def export_audit(
+    fmt: str = "jsonlines",
+    limit: int = 1000,
+    db: AsyncSession = Depends(get_db),
+):
+    """Export audit logs in SIEM-compatible format (jsonlines or cef)."""
+    from app.analytics import export_audit_logs
+    from sqlalchemy import select, desc
+    from app.db.models import AuditLog
+
+    stmt = select(AuditLog).order_by(desc(AuditLog.id)).limit(limit)
+    result = await db.execute(stmt)
+    logs = result.scalars().all()
+
+    log_dicts = [
+        {
+            "action": log.action,
+            "username": log.username,
+            "ip_address": getattr(log, "ip_address", ""),
+            "resource": getattr(log, "resource", ""),
+            "session_id": getattr(log, "session_id", ""),
+        }
+        for log in logs
+    ]
+
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(
+        content=export_audit_logs(log_dicts, fmt=fmt),
+        media_type="text/plain",
+    )
+
+
+# =====================================================
+# Phase 8: Infrastructure & Scalability Endpoints
+# =====================================================
+
+@app.get("/api/infrastructure/status")
+async def infrastructure_status():
+    """Return infrastructure health — cache, task queue, DB backend, GPU."""
+    from app.cache import get_cache_service
+    from app.task_queue import get_task_queue
+
+    cache = get_cache_service()
+    queue = get_task_queue()
+
+    db_backend = "postgresql" if "postgresql" in str(settings.database_url) else "sqlite"
+
+    import torch
+    gpu_info = {
+        "available": torch.cuda.is_available(),
+        "name": torch.cuda.get_device_properties(0).name if torch.cuda.is_available() else None,
+    }
+
+    return {
+        "database_backend": db_backend,
+        "redis_enabled": cache.redis_enabled,
+        "task_queue": queue.stats(),
+        "gpu": gpu_info,
+        "quantization_enabled": settings.model_quantization_enabled,
+        "quantization_bits": settings.model_quantization_bits if settings.model_quantization_enabled else None,
+        "colab_mode": settings.colab_mode,
+    }
+
+
+@app.get("/api/infrastructure/vram")
+async def vram_estimate():
+    """Estimate VRAM usage for current model and quantization settings."""
+    from app.quantization import estimate_vram_usage
+    return estimate_vram_usage()
+
+
+@app.get("/api/infrastructure/cache/stats")
+async def cache_stats():
+    """Return cache hit/miss stats."""
+    from app.cache import get_cache_service
+    cache = get_cache_service()
+    return {
+        "redis_enabled": cache.redis_enabled,
+        "memory_cache_size": cache._memory.size(),
+    }
+
+
+@app.post("/api/infrastructure/cache/clear")
+async def cache_clear():
+    """Clear all cached entries."""
+    from app.cache import get_cache_service
+    cache = get_cache_service()
+    await cache.clear()
+    return {"status": "cleared"}
+
+
+@app.get("/api/infrastructure/tasks/{task_id}")
+async def get_task_status(task_id: str):
+    """Check status of a background task."""
+    from app.task_queue import get_task_queue
+    queue = get_task_queue()
+    result = queue.get_result(task_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {
+        "task_id": result.task_id,
+        "status": result.status,
+        "error": result.error,
+        "duration_seconds": result.duration_seconds,
+    }
+
+
+@app.get("/api/infrastructure/colab")
+async def colab_info():
+    """Return Colab environment info and recommendations."""
+    from app.colab_utils import get_colab_launch_info
+    return get_colab_launch_info()
 
 
 # Root endpoint - serve index.html

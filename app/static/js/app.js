@@ -3427,9 +3427,192 @@ function initConversationMode() {
 // INITIALIZE
 
 // =====================================================
+// =====================================================
+// PHASE 6: KEYBOARD SHORTCUTS
+// =====================================================
+
+function setupKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        // Skip if typing in an input/textarea
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+
+        // R — toggle recording
+        if (e.key === 'r' || e.key === 'R') {
+            e.preventDefault();
+            const btn = elements.recordBtn;
+            if (btn) btn.click();
+        }
+        // S — stop recording
+        if (e.key === 's' || e.key === 'S') {
+            if (state.isRecording) {
+                e.preventDefault();
+                const btn = elements.recordBtn;
+                if (btn) btn.click();
+            }
+        }
+        // D — generate documentation (submit)
+        if (e.key === 'd' || e.key === 'D') {
+            e.preventDefault();
+            const btn = elements.submitBtn;
+            if (btn && !btn.disabled) btn.click();
+        }
+        // E — export/copy
+        if (e.key === 'e' || e.key === 'E') {
+            e.preventDefault();
+            const btn = elements.exportBtn;
+            if (btn) btn.click();
+        }
+        // Escape — close modals
+        if (e.key === 'Escape') {
+            const ehrModal = elements.ehrModal;
+            if (ehrModal && !ehrModal.classList.contains('hidden')) {
+                ehrModal.classList.add('hidden');
+            }
+            hideLoginOverlay();
+        }
+        // ? — show shortcuts help
+        if (e.key === '?') {
+            e.preventDefault();
+            toggleShortcutsHelp();
+        }
+    });
+}
+
+function toggleShortcutsHelp() {
+    let panel = document.getElementById('shortcutsHelp');
+    if (panel) {
+        panel.remove();
+        return;
+    }
+    panel = document.createElement('div');
+    panel.id = 'shortcutsHelp';
+    panel.style.cssText = 'position:fixed;bottom:20px;right:20px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;padding:16px 20px;z-index:9000;min-width:200px;box-shadow:0 4px 20px rgba(0,0,0,0.3);';
+    panel.innerHTML = `
+        <div style="font-weight:600;margin-bottom:8px;color:var(--text-primary);">Keyboard Shortcuts</div>
+        <div style="color:var(--text-secondary);font-size:0.85rem;line-height:1.8;">
+            <kbd style="background:var(--bg-tertiary);padding:2px 6px;border-radius:4px;">R</kbd> Toggle recording<br>
+            <kbd style="background:var(--bg-tertiary);padding:2px 6px;border-radius:4px;">S</kbd> Stop recording<br>
+            <kbd style="background:var(--bg-tertiary);padding:2px 6px;border-radius:4px;">D</kbd> Generate documentation<br>
+            <kbd style="background:var(--bg-tertiary);padding:2px 6px;border-radius:4px;">E</kbd> Export<br>
+            <kbd style="background:var(--bg-tertiary);padding:2px 6px;border-radius:4px;">Esc</kbd> Close modals<br>
+            <kbd style="background:var(--bg-tertiary);padding:2px 6px;border-radius:4px;">?</kbd> Toggle this help
+        </div>
+    `;
+    document.body.appendChild(panel);
+    setTimeout(() => panel.remove(), 8000);
+}
+
+// =====================================================
+// PHASE 6: PROGRESS INDICATORS
+// =====================================================
+
+function showPipelineProgress(stage) {
+    const stages = ['transcribing', 'extracting', 'documenting', 'complete'];
+    const labels = {
+        transcribing: 'Transcribing audio...',
+        extracting: 'Extracting entities...',
+        documenting: 'Generating documentation...',
+        complete: 'Complete',
+    };
+    const banner = document.getElementById('pipelineProgress');
+    if (!banner) return;
+    banner.classList.remove('hidden');
+    const currentIdx = stages.indexOf(stage);
+    banner.innerHTML = stages.map((s, i) => {
+        let cls = 'pipeline-step';
+        if (i < currentIdx) cls += ' done';
+        if (i === currentIdx) cls += ' active';
+        return `<span class="${cls}" style="padding:4px 10px;margin:0 4px;border-radius:12px;font-size:0.8rem;
+            ${i === currentIdx ? 'background:var(--accent);color:#fff;' : i < currentIdx ? 'background:var(--bg-tertiary);color:var(--text-secondary);text-decoration:line-through;' : 'background:var(--bg-tertiary);color:var(--text-muted);'}">${labels[s]}</span>`;
+    }).join('');
+    if (stage === 'complete') setTimeout(() => banner.classList.add('hidden'), 2000);
+}
+
+// =====================================================
+// PHASE 6: SESSION SEARCH & FILTER
+// =====================================================
+
+function setupSessionSearch() {
+    const searchInput = document.getElementById('sessionSearchInput');
+    const dateFilter = document.getElementById('sessionDateFilter');
+
+    if (searchInput) {
+        searchInput.addEventListener('input', () => filterSessions());
+    }
+    if (dateFilter) {
+        dateFilter.addEventListener('change', () => filterSessions());
+    }
+}
+
+function filterSessions() {
+    const query = (document.getElementById('sessionSearchInput')?.value || '').toLowerCase().trim();
+    const dateFilter = document.getElementById('sessionDateFilter')?.value || '';
+
+    const cards = document.querySelectorAll('.history-card');
+    cards.forEach(card => {
+        const text = card.textContent.toLowerCase();
+        const dateAttr = card.dataset.date || '';
+
+        let show = true;
+        if (query && !text.includes(query)) show = false;
+        if (dateFilter && dateAttr && !dateAttr.startsWith(dateFilter)) show = false;
+
+        card.style.display = show ? '' : 'none';
+    });
+}
+
+// =====================================================
+// PHASE 6: ACCESSIBILITY
+// =====================================================
+
+function setupAccessibility() {
+    // Add ARIA labels to key interactive elements
+    const ariaMap = {
+        recordBtn: 'Toggle voice recording',
+        submitBtn: 'Generate clinical documentation',
+        copyBtn: 'Copy documentation to clipboard',
+        exportBtn: 'Export documentation as JSON',
+        exportPdfBtn: 'Export as PDF',
+        openSidebar: 'Open navigation menu',
+        closeSidebar: 'Close navigation menu',
+    };
+    Object.entries(ariaMap).forEach(([id, label]) => {
+        const el = document.getElementById(id);
+        if (el && !el.getAttribute('aria-label')) {
+            el.setAttribute('aria-label', label);
+        }
+    });
+
+    // Live region for status updates
+    let liveRegion = document.getElementById('a11yLiveRegion');
+    if (!liveRegion) {
+        liveRegion = document.createElement('div');
+        liveRegion.id = 'a11yLiveRegion';
+        liveRegion.setAttribute('role', 'status');
+        liveRegion.setAttribute('aria-live', 'polite');
+        liveRegion.className = 'sr-only';
+        liveRegion.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);';
+        document.body.appendChild(liveRegion);
+    }
+}
+
+function announceToScreenReader(message) {
+    const region = document.getElementById('a11yLiveRegion');
+    if (region) {
+        region.textContent = message;
+        setTimeout(() => { region.textContent = ''; }, 3000);
+    }
+}
+
+// =====================================================
+// INITIALIZE
+// =====================================================
 document.addEventListener('DOMContentLoaded', () => {
     init().catch((error) => {
         console.error('Initialization failed', error);
     });
     initConversationMode();
+    setupKeyboardShortcuts();
+    setupSessionSearch();
+    setupAccessibility();
 });

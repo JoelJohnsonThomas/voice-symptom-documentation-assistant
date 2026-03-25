@@ -340,6 +340,256 @@ class FHIRExportService:
             return {"success": False, "error": str(e)}
 
 
+    # -----------------------------------------------------------------
+    # Phase 7: HL7 v2 Message Generation
+    # -----------------------------------------------------------------
+
+    def build_hl7v2_adt(
+        self,
+        documentation: Dict,
+        entities: Optional[Dict] = None,
+        patient_info: Optional[Dict] = None,
+    ) -> str:
+        """Generate an HL7 v2.x ADT (Admit/Discharge/Transfer) message.
+
+        Produces a minimal ADT^A04 (Register a Patient) message suitable
+        for legacy EHR systems that don't support FHIR.
+        """
+        info = patient_info or {}
+        now = datetime.now(timezone.utc)
+        ts = now.strftime("%Y%m%d%H%M%S")
+        msg_id = self._uid()[:20]
+
+        pid = info.get("id", self._uid()[:10])
+        family = info.get("family_name", "UNKNOWN")
+        given = info.get("given_name", "PATIENT")
+        dob = info.get("birth_date", "19700101")
+        gender = info.get("gender", "U")
+
+        chief = documentation.get("chief_complaint", "Not specified")[:80]
+
+        segments = [
+            f"MSH|^~\\&|VOXDOC|VOXDOC_FAC|EHR|EHR_FAC|{ts}||ADT^A04^ADT_A01|{msg_id}|P|2.5.1",
+            f"EVN|A04|{ts}",
+            f"PID|1||{pid}^^^VOXDOC||{family}^{given}||{dob}|{gender}",
+            f"PV1|1|O|^^^VOXDOC||||||||||||||||{self._uid()[:10]}",
+            f"DG1|1||{chief}||{ts}|A",
+        ]
+
+        # Add diagnosis segments from entities
+        if entities:
+            for i, cond in enumerate(entities.get("conditions", [])[:5], start=2):
+                code = cond.get("code", "")
+                text = cond.get("text", "")
+                system = cond.get("system", "ICD-10")
+                segments.append(f"DG1|{i}|{system}|{code}^{text}||{ts}|A")
+
+        return "\r".join(segments)
+
+    def build_hl7v2_oru(
+        self,
+        documentation: Dict,
+        entities: Optional[Dict] = None,
+        patient_info: Optional[Dict] = None,
+    ) -> str:
+        """Generate an HL7 v2.x ORU (Observation Result) message.
+
+        Embeds the SOAP note as observation text segments.
+        """
+        info = patient_info or {}
+        now = datetime.now(timezone.utc)
+        ts = now.strftime("%Y%m%d%H%M%S")
+        msg_id = self._uid()[:20]
+
+        pid = info.get("id", self._uid()[:10])
+        family = info.get("family_name", "UNKNOWN")
+        given = info.get("given_name", "PATIENT")
+
+        segments = [
+            f"MSH|^~\\&|VOXDOC|VOXDOC_FAC|EHR|EHR_FAC|{ts}||ORU^R01^ORU_R01|{msg_id}|P|2.5.1",
+            f"PID|1||{pid}^^^VOXDOC||{family}^{given}",
+            f"OBR|1|||SOAP_NOTE^SOAP Documentation^VOXDOC|||{ts}",
+        ]
+
+        # Each SOAP section as an OBX segment
+        soap_sections = [
+            ("S", documentation.get("soap_subjective", "")),
+            ("O", documentation.get("soap_objective", "")),
+            ("A", documentation.get("soap_assessment", "")),
+            ("P", documentation.get("soap_plan", "")),
+        ]
+        for i, (label, text) in enumerate(soap_sections, start=1):
+            if text:
+                # HL7 v2 limits OBX text; truncate if needed
+                clean = text.replace("\r", " ").replace("\n", " ").replace("|", " ")[:1000]
+                segments.append(f"OBX|{i}|TX|SOAP_{label}^{label}||{clean}|||N|||F")
+
+        return "\r".join(segments)
+
+    # -----------------------------------------------------------------
+    # Phase 7: CDA/CCDA Export
+    # -----------------------------------------------------------------
+
+    def build_ccda_document(
+        self,
+        documentation: Dict,
+        entities: Optional[Dict] = None,
+        patient_info: Optional[Dict] = None,
+    ) -> str:
+        """Generate a simplified CCD (Continuity of Care Document) in XML.
+
+        Follows the HL7 C-CDA (Consolidated Clinical Document Architecture)
+        template structure with the core required sections.
+        """
+        info = patient_info or {}
+        now = datetime.now(timezone.utc)
+        doc_id = self._uid()
+        ts = now.strftime("%Y%m%d%H%M%S")
+
+        given = info.get("given_name", "Patient")
+        family = info.get("family_name", "Unknown")
+        gender = info.get("gender", "UN")
+        dob = info.get("birth_date", "19700101")
+
+        soap_s = _xml_escape(documentation.get("soap_subjective", "Not documented"))
+        soap_o = _xml_escape(documentation.get("soap_objective", "Not documented"))
+        soap_a = _xml_escape(documentation.get("soap_assessment", "Not documented"))
+        soap_p = _xml_escape(documentation.get("soap_plan", "Not documented"))
+        chief = _xml_escape(documentation.get("chief_complaint", "Not specified"))
+
+        # Build conditions list for Problems section
+        problems_entries = ""
+        if entities:
+            for cond in entities.get("conditions", [])[:10]:
+                code = _xml_escape(cond.get("code", ""))
+                text = _xml_escape(cond.get("text", ""))
+                problems_entries += f"""
+                <entry>
+                    <act classCode="ACT" moodCode="EVN">
+                        <code code="{code}" displayName="{text}" codeSystemName="ICD-10-CM"/>
+                        <statusCode code="active"/>
+                    </act>
+                </entry>"""
+
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <realmCode code="US"/>
+    <typeId root="2.16.840.1.113883.1.3" extension="POCD_HD000040"/>
+    <templateId root="2.16.840.1.113883.10.20.22.1.2"/>
+    <id root="{doc_id}"/>
+    <code code="34133-9" displayName="Summarization of Episode Note" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>VoxDoc Clinical Document</title>
+    <effectiveTime value="{ts}"/>
+    <confidentialityCode code="N"/>
+    <recordTarget>
+        <patientRole>
+            <patient>
+                <name><given>{_xml_escape(given)}</given><family>{_xml_escape(family)}</family></name>
+                <administrativeGenderCode code="{gender}"/>
+                <birthTime value="{dob}"/>
+            </patient>
+        </patientRole>
+    </recordTarget>
+    <author>
+        <assignedAuthor><id root="2.16.840.1.113883.4.6"/></assignedAuthor>
+    </author>
+    <component>
+        <structuredBody>
+            <component>
+                <section>
+                    <title>Chief Complaint</title>
+                    <text>{chief}</text>
+                </section>
+            </component>
+            <component>
+                <section>
+                    <title>Subjective</title>
+                    <text>{soap_s}</text>
+                </section>
+            </component>
+            <component>
+                <section>
+                    <title>Objective</title>
+                    <text>{soap_o}</text>
+                </section>
+            </component>
+            <component>
+                <section>
+                    <title>Assessment</title>
+                    <text>{soap_a}</text>
+                </section>
+            </component>
+            <component>
+                <section>
+                    <title>Plan</title>
+                    <text>{soap_p}</text>
+                </section>
+            </component>
+            <component>
+                <section>
+                    <title>Problems</title>
+                    <text>Active problem list from encounter.</text>{problems_entries}
+                </section>
+            </component>
+        </structuredBody>
+    </component>
+</ClinicalDocument>"""
+
+    # -----------------------------------------------------------------
+    # Phase 7: Webhook Notifications
+    # -----------------------------------------------------------------
+
+    async def send_webhook(
+        self,
+        webhook_url: str,
+        event_type: str,
+        payload: Dict,
+        auth_token: Optional[str] = None,
+    ) -> Dict:
+        """Send a webhook notification when a session is finalized.
+
+        Args:
+            webhook_url: The URL to POST the notification to
+            event_type: e.g. "session.finalized", "session.created"
+            payload: Event data
+            auth_token: Optional Bearer token for authentication
+        """
+        import httpx
+
+        headers = {"Content-Type": "application/json"}
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+
+        webhook_body = {
+            "event": event_type,
+            "timestamp": self._now_iso(),
+            "data": payload,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(webhook_url, json=webhook_body, headers=headers)
+                return {
+                    "success": resp.status_code < 400,
+                    "status_code": resp.status_code,
+                    "response": resp.text[:500],
+                }
+        except Exception as e:
+            logger.error("Webhook delivery failed: %s", e)
+            return {"success": False, "error": str(e)}
+
+
+def _xml_escape(text: str) -> str:
+    """Escape XML special characters."""
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+    )
+
+
 # Global singleton
 _fhir_service = None
 

@@ -107,6 +107,115 @@ Important extraction rules:
 - Use plain English, no markdown formatting.{chr(10) + f'- BILINGUAL OUTPUT REQUIRED: The patient spoke in {language}. All extracted symptoms and the SOAP subjective note MUST be bilingual, formatted as "[{language} text] / [English translation]".' if language != 'en' else ''}"""
 
 
+
+# ---------------------------------------------------------------------------
+# Phase 5: Specialty-Specific SOAP Templates
+# ---------------------------------------------------------------------------
+
+SPECIALTY_PROMPTS = {
+    "emergency": {
+        "objective": (
+            "Focus on ABCs (Airway, Breathing, Circulation), GCS score, trauma survey "
+            "findings, point-of-care labs (troponin, lactate, blood gas), and ECG interpretation. "
+            "Note hemodynamic stability."
+        ),
+        "assessment": (
+            "Prioritize life-threatening differentials first. Use ESI-level language. "
+            "Include disposition recommendation (admit, observe, discharge)."
+        ),
+        "plan": (
+            "Include resuscitation steps if indicated, IV access, monitoring orders, "
+            "consult recommendations, and reassessment timeline."
+        ),
+    },
+    "primary_care": {
+        "objective": (
+            "Include preventive screening status, BMI, relevant chronic disease markers "
+            "(HbA1c, lipid panel dates), and immunization status if relevant."
+        ),
+        "assessment": (
+            "Consider chronic disease progression alongside acute presentation. "
+            "Note medication adherence concerns."
+        ),
+        "plan": (
+            "Include follow-up interval, medication adjustments, lifestyle modifications, "
+            "preventive care due, and referral indications."
+        ),
+    },
+    "psychiatry": {
+        "objective": (
+            "Document mental status exam: appearance, behavior, mood, affect, thought process, "
+            "thought content, cognition, insight, judgment. Note safety assessment (SI/HI)."
+        ),
+        "assessment": (
+            "Use DSM-5 diagnostic framework. Note symptom duration for diagnostic criteria. "
+            "Include functional impairment level."
+        ),
+        "plan": (
+            "Include psychotherapy modality, medication management with titration plan, "
+            "safety plan if indicated, and follow-up frequency."
+        ),
+    },
+    "ob_gyn": {
+        "objective": (
+            "Include LMP, gravida/para status if relevant, gestational age if pregnant. "
+            "Note cervical exam findings, fetal heart tones, fundal height as applicable."
+        ),
+        "assessment": (
+            "Consider obstetric vs gynecologic etiologies. Note pregnancy-specific "
+            "differential diagnoses and risk factors."
+        ),
+        "plan": (
+            "Include pregnancy-safe medication considerations, prenatal/postnatal care, "
+            "imaging appropriate for pregnancy status, and OB consultation thresholds."
+        ),
+    },
+    "pediatrics": {
+        "objective": (
+            "Include weight percentile, developmental milestones status, immunization status. "
+            "Note age-appropriate vital sign interpretation."
+        ),
+        "assessment": (
+            "Consider age-specific differentials. Note parental concern level. "
+            "Include growth and development assessment."
+        ),
+        "plan": (
+            "Include weight-based dosing notes, age-appropriate interventions, "
+            "return precautions for caregivers, and pediatric-specific referral criteria."
+        ),
+    },
+}
+
+
+def get_specialty_context(specialty: str) -> str:
+    """Build specialty-specific prompt additions."""
+    spec = SPECIALTY_PROMPTS.get(specialty)
+    if not spec:
+        return ""
+    return (
+        f"\nSPECIALTY CONTEXT ({specialty.upper().replace('_', ' ')}):\n"
+        f"- Objective focus: {spec['objective']}\n"
+        f"- Assessment focus: {spec['assessment']}\n"
+        f"- Plan focus: {spec['plan']}\n"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: Differential Diagnosis Hints
+# ---------------------------------------------------------------------------
+
+DIFFERENTIAL_DISCLAIMER = (
+    "\n\nDIFFERENTIAL DIAGNOSIS SECTION:\n"
+    "After the PLAN section, add a clearly labeled section:\n"
+    "DIFFERENTIAL CONSIDERATIONS:\n"
+    "List 3-5 differential diagnoses ranked by likelihood. For each, include:\n"
+    "- The condition name\n"
+    "- Key supporting features from the presentation\n"
+    "- Key features that would need to be present or absent to confirm/exclude\n"
+    "DISCLAIMER: These are non-diagnostic suggestions for clinician consideration only.\n"
+)
+
+
 def create_soap_oap_prompt(
     transcript: str,
     subjective_data: dict,
@@ -115,6 +224,8 @@ def create_soap_oap_prompt(
     clinical_guidelines: list | None = None,
     drug_interactions: list | None = None,
     icd10_suggestions: list | None = None,
+    specialty: str = "general",
+    include_differentials: bool = False,
 ) -> str:
     """
     Create a prompt for generating Objective, Assessment, and Plan SOAP sections.
@@ -224,12 +335,18 @@ def create_soap_oap_prompt(
                 + "\n"
             )
 
+    # Build specialty context (Phase 5)
+    specialty_block = get_specialty_context(specialty) if specialty != "general" else ""
+
+    # Differential diagnosis section (Phase 5)
+    differential_block = DIFFERENTIAL_DISCLAIMER if include_differentials else ""
+
     return f"""You are generating SOAP note sections for CLINICIAN REVIEW.
 
 COMPLIANCE: These are ADMINISTRATIVE SUGGESTIONS only. All clinical decisions
 must be made by a qualified healthcare professional. Do NOT make definitive
 diagnoses or prescribe specific treatments.
-{reference_block}{guidelines_block}{interaction_block}{icd10_block}
+{reference_block}{guidelines_block}{interaction_block}{icd10_block}{specialty_block}
 Patient Information:
 - Chief Complaint: {chief_complaint}
 - Symptoms: {symptoms_str}
@@ -265,7 +382,7 @@ Do NOT prescribe specific medications or dosages.
 Format your response exactly as:
 OBJECTIVE: [your objective paragraph]
 ASSESSMENT: [your assessment paragraph]
-PLAN: [your plan paragraph]
+PLAN: [your plan paragraph]{differential_block}
 {chr(10) + f'BILINGUAL OUTPUT REQUIRED: Since the patient spoke {language}, the generated OBJECTIVE, ASSESSMENT, and PLAN sections MUST be written in both {language} and English (format: "[{language} text] / [English translation]").' if language != 'en' else ''}"""
 
 

@@ -54,13 +54,24 @@ class MedGemmaService:
                 token=settings.hf_token if settings.hf_token else None
             )
             
-            # Load model with appropriate settings
+            # Load model with appropriate settings (Phase 8: quantization support)
+            from app.quantization import get_quantization_config
+            quant_config = get_quantization_config()
+
+            load_kwargs = {
+                "torch_dtype": dtype,
+                "token": settings.hf_token if settings.hf_token else None,
+                "low_cpu_mem_usage": True,
+            }
+            if quant_config is not None:
+                load_kwargs["quantization_config"] = quant_config
+                load_kwargs["device_map"] = "auto"
+                logger.info("Loading MedGemma with %d-bit quantization", settings.model_quantization_bits)
+            elif settings.enable_gpu and torch.cuda.is_available():
+                load_kwargs["device_map"] = "auto"
+
             self.model = AutoModelForCausalLM.from_pretrained(
-                settings.medgemma_model,
-                torch_dtype=dtype,
-                device_map="auto" if settings.enable_gpu and torch.cuda.is_available() else None,
-                token=settings.hf_token if settings.hf_token else None,
-                low_cpu_mem_usage=True
+                settings.medgemma_model, **load_kwargs
             )
             
             # Manual device placement if not using device_map

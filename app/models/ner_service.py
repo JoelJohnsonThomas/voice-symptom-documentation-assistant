@@ -3,11 +3,14 @@ Medical Entity Recognition (NER) Service
 
 Extracts structured entities (Conditions, Medications, Procedures) from text
 using SciSpaCy models and links them to standard medical codes.
+
+Phase 5: Added vitals extraction (BP, HR, temp, SpO2, RR).
 """
 
 import logging
+import re
 import spacy
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from app.config import settings
 
@@ -124,6 +127,101 @@ class MedicalNERService:
             "conditions": conditions,
             "medications": medications
         }
+
+    # -----------------------------------------------------------------
+    # Phase 5: Vitals Extraction
+    # -----------------------------------------------------------------
+
+    # Compiled patterns for vitals detection from spoken/written text
+    _VITALS_PATTERNS = {
+        "temperature": [
+            re.compile(r'(?:temp(?:erature)?|fever)\s*(?:is|of|was|at|:)?\s*([\d]+\.?\d*)\s*(?:degrees?\s*)?([fFcC])?', re.IGNORECASE),
+            re.compile(r'([\d]{2,3}\.?\d*)\s*(?:degrees?\s*)?([fFcC])', re.IGNORECASE),
+        ],
+        "blood_pressure": [
+            re.compile(r'(?:blood\s*pressure|bp|b\.p\.)\s*(?:is|of|was|at|:)?\s*(\d{2,3})\s*/\s*(\d{2,3})', re.IGNORECASE),
+            re.compile(r'(\d{2,3})\s*over\s*(\d{2,3})', re.IGNORECASE),
+        ],
+        "heart_rate": [
+            re.compile(r'(?:heart\s*rate|pulse|hr)\s*(?:is|of|was|at|:)?\s*(\d{2,3})\s*(?:bpm|beats)?', re.IGNORECASE),
+        ],
+        "respiratory_rate": [
+            re.compile(r'(?:respiratory\s*rate|resp(?:iration)?s?|rr|breathing\s*rate)\s*(?:is|of|was|at|:)?\s*(\d{1,2})', re.IGNORECASE),
+        ],
+        "oxygen_saturation": [
+            re.compile(r'(?:o2\s*sat|spo2|sp\s*o2|oxygen\s*sat(?:uration)?|sat(?:s|uration)?)\s*(?:is|of|was|at|:)?\s*(\d{2,3})(?:\s*%)?', re.IGNORECASE),
+            re.compile(r'(\d{2,3})\s*(?:%|percent)\s*(?:o2|oxygen|sat)', re.IGNORECASE),
+        ],
+    }
+
+    def extract_vitals(self, text: str) -> Dict[str, Optional[Dict]]:
+        """Extract vital signs from patient text using regex patterns.
+
+        Returns a dict with keys: temperature, blood_pressure, heart_rate,
+        respiratory_rate, oxygen_saturation. Each value is None if not found,
+        or a dict with value/unit/raw fields.
+        """
+        if not text or not text.strip():
+            return {k: None for k in self._VITALS_PATTERNS}
+
+        result = {}
+
+        # Temperature
+        result["temperature"] = None
+        for pattern in self._VITALS_PATTERNS["temperature"]:
+            m = pattern.search(text)
+            if m:
+                val = float(m.group(1))
+                unit_char = (m.group(2) or "").upper() if m.lastindex >= 2 else ""
+                unit = "F" if unit_char != "C" and val > 45 else ("C" if unit_char == "C" or val <= 45 else "F")
+                result["temperature"] = {"value": val, "unit": unit, "raw": m.group(0).strip()}
+                break
+
+        # Blood pressure
+        result["blood_pressure"] = None
+        for pattern in self._VITALS_PATTERNS["blood_pressure"]:
+            m = pattern.search(text)
+            if m:
+                systolic = int(m.group(1))
+                diastolic = int(m.group(2))
+                if 50 <= systolic <= 300 and 20 <= diastolic <= 200:
+                    result["blood_pressure"] = {
+                        "systolic": systolic, "diastolic": diastolic,
+                        "unit": "mmHg", "raw": m.group(0).strip(),
+                    }
+                break
+
+        # Heart rate
+        result["heart_rate"] = None
+        for pattern in self._VITALS_PATTERNS["heart_rate"]:
+            m = pattern.search(text)
+            if m:
+                val = int(m.group(1))
+                if 20 <= val <= 250:
+                    result["heart_rate"] = {"value": val, "unit": "bpm", "raw": m.group(0).strip()}
+                break
+
+        # Respiratory rate
+        result["respiratory_rate"] = None
+        for pattern in self._VITALS_PATTERNS["respiratory_rate"]:
+            m = pattern.search(text)
+            if m:
+                val = int(m.group(1))
+                if 4 <= val <= 60:
+                    result["respiratory_rate"] = {"value": val, "unit": "breaths/min", "raw": m.group(0).strip()}
+                break
+
+        # Oxygen saturation
+        result["oxygen_saturation"] = None
+        for pattern in self._VITALS_PATTERNS["oxygen_saturation"]:
+            m = pattern.search(text)
+            if m:
+                val = int(m.group(1))
+                if 50 <= val <= 100:
+                    result["oxygen_saturation"] = {"value": val, "unit": "%", "raw": m.group(0).strip()}
+                break
+
+        return result
 
 
 # Global instance (singleton pattern)

@@ -148,6 +148,33 @@ class Settings(BaseSettings):
     conversation_default_language: str = "en"
     piper_voice_models: str = ""       # JSON map: {"es": "./models/piper/es_ES-...", ...}
 
+    # Phase 8: Infrastructure & Scalability
+    database_url: str = ""  # Empty = use SQLite default; set to postgresql+asyncpg://... for Postgres
+    redis_url: str = ""  # Empty = disabled; set to redis://localhost:6379/0
+    redis_cache_ttl_seconds: int = 300  # Default cache TTL
+    task_queue_enabled: bool = False  # Enable Celery/ARQ background workers
+    task_queue_broker_url: str = ""  # e.g. redis://localhost:6379/1
+    model_quantization_enabled: bool = False  # Enable 4-bit/8-bit quantization
+    model_quantization_bits: int = 4  # 4 or 8
+    colab_mode: bool = False  # Enable Colab-specific optimizations
+    colab_ngrok_token: str = ""  # Ngrok auth token for Colab tunneling
+
+    # Phase 7: EHR Integration
+    webhook_enabled: bool = False
+    webhook_url: str = ""  # Default webhook endpoint for session finalization
+    webhook_auth_token: str = ""
+    hl7v2_export_enabled: bool = True
+    ccda_export_enabled: bool = True
+
+    # Phase 5: Clinical Intelligence
+    specialty_detection_enabled: bool = True
+    default_specialty: str = "general"  # general, emergency, primary_care, psychiatry, ob_gyn, pediatrics
+    vitals_extraction_enabled: bool = True
+    differential_diagnosis_enabled: bool = True
+    ambient_mode_enabled: bool = False
+    diarization_enabled: bool = False
+    icd10_umls_mode: str = "semantic"  # "semantic" (current) or "umls_linker" (requires scispacy linker)
+
     # Phase 4: Authentication & Security
     auth_enabled: bool = False                    # False = dev mode (current stub behavior)
     jwt_secret_key: str = "CHANGE_ME_IN_PRODUCTION"

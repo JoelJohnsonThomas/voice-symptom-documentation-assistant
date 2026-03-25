@@ -49,3 +49,9 @@ PyJWT>=2.8.0
 passlib[bcrypt]>=1.7.4
 pyotp>=2.9.0
 qrcode[pil]>=7.4
+
+# Infrastructure (Phase 8)
+asyncpg>=0.29.0           # PostgreSQL async driver
+redis[hiredis]>=5.0.0     # Redis cache + task queue
+pyngrok>=7.0.0            # Colab ngrok tunneling
+bitsandbytes>=0.43.0      # Model quantization (optional, GPU only)
