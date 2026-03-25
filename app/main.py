@@ -22,7 +22,6 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
 import tempfile
@@ -36,7 +35,26 @@ import uuid
 import numpy as np
 from pathlib import Path
 
-from app.config import settings
+from app.config import settings, validate_production_settings
+from app.schemas import (
+    TranscriptionResponse,
+    FollowupQA,
+    DocumentationRequest,
+    DocumentationResponse,
+    VoiceIntakeResponse,
+    FHIRExportRequest,
+    FHIRPushRequest,
+    SessionResponse,
+    SessionCreateRequest,
+    AuditLogResponse,
+    IntakeQuestionsRequest,
+    IntakeQuestionsResponse,
+)
+from app.middleware.audit import (
+    extract_client_ip,
+    write_audit_log,
+    check_consent_if_required,
+)
 from app.rate_limiter import (
     check_rate_limit,
     get_inference_queue,
@@ -78,6 +96,7 @@ from app.data_retention import (
 )
 from app.auth import SYSTEM_USER, UserRole, require_roles, ALL_ROLES, INTAKE_AND_UP_ROLES, get_current_user
 from app.routes.auth_routes import router as auth_router
+from app.routes.oidc_routes import router as oidc_router
 from app.models.medasr_service import get_medasr_service
 from app.models.medgemma_service import get_medgemma_service
 from app.models.ner_service import get_ner_service
@@ -87,6 +106,7 @@ from app.models import rag_service
 from app.models import knowledge_base_service, icd10_service, drug_interaction_service
 from app.models import rag_evaluation_service
 from app.utils.audio_handler import AudioHandler
+from app.security.prompt_guard import scan_input, validate_soap_output, sanitize_input
 
 from app.db.database import AsyncSessionLocal, Base, engine, get_db
 from app.db.models import AuditLog, DataExportLog
@@ -119,6 +139,9 @@ app.add_middleware(
 
 # Auth routes (Phase 4)
 app.include_router(auth_router)
+# OIDC/SSO routes (Phase 1 enhancement)
+if settings.oidc_enabled:
+    app.include_router(oidc_router)
 
 
 # Security headers middleware (Phase 4)
@@ -161,222 +184,15 @@ if static_path.exists():
     app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 
 
-# Pydantic models
-class TranscriptionResponse(BaseModel):
-    transcript: str
-    duration_seconds: float
-    detected_language: Optional[str] = "en"
-
-
-class FollowupQA(BaseModel):
-    question: str
-    answer: str = ""
-
-
-class DocumentationRequest(BaseModel):
-    transcript: str
-    image_findings: Optional[str] = None
-    followup_qa: Optional[List[FollowupQA]] = None
-
-
-class DocumentationResponse(BaseModel):
-    documentation: dict
-    extracted_entities: dict
-    requires_clinician_review: bool
-    compliance_notice: str
-    compliance_metadata: dict
-    icd10_suggestions: Optional[list] = None
-    drug_interactions: Optional[list] = None
-    hallucination_check: Optional[dict] = None
-
-
-class VoiceIntakeResponse(BaseModel):
-    transcript: str
-    documentation: dict
-    extracted_entities: dict
-    duration_seconds: float
-    requires_clinician_review: bool
-    compliance_notice: str
-    compliance_metadata: dict
-    detected_language: Optional[str] = "en"
-    icd10_suggestions: Optional[list] = None
-    drug_interactions: Optional[list] = None
-    hallucination_check: Optional[dict] = None
-
-
-class FHIRExportRequest(BaseModel):
-    documentation: dict
-    extracted_entities: Optional[dict] = None
-    patient_info: Optional[dict] = None
-
-
-class FHIRPushRequest(BaseModel):
-    documentation: dict
-    extracted_entities: Optional[dict] = None
-    patient_info: Optional[dict] = None
-    ehr_url: str
-    auth_token: Optional[str] = None
-
-
-class SessionResponse(BaseModel):
-    id: str
-    created_at: datetime
-    patient_name: Optional[str] = None
-    transcript: str
-    detected_language: str
-    chief_complaint: Optional[str] = None
-    soap_subjective: Optional[str] = None
-    soap_objective: Optional[str] = None
-    soap_assessment: Optional[str] = None
-    soap_plan: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-class SessionCreateRequest(BaseModel):
-    patient_name: Optional[str] = None
-    transcript: str
-    detected_language: str = "en"
-    chief_complaint: Optional[str] = None
-    soap_subjective: Optional[str] = None
-    soap_objective: Optional[str] = None
-    soap_assessment: Optional[str] = None
-    soap_plan: Optional[str] = None
-    # Phase 3.2: Tenant context (optional — defaults from settings)
-    organization_id: Optional[str] = None
-    provider_id: Optional[str] = None
-
-
-class AuditLogResponse(BaseModel):
-    id: str
-    timestamp: datetime
-    user_id: Optional[str] = None
-    username: Optional[str] = None
-    role: Optional[str] = None
-    action: str
-    resource: str
-    resource_id: Optional[str] = None
-    endpoint: str
-    http_method: str
-    status_code: int
-    ip_address: Optional[str] = None
-    user_agent: Optional[str] = None
-    details: Optional[str] = None
-
-    class Config:
-        from_attributes = True
+# Pydantic models moved to app/schemas.py
 
 
 
-
-def _extract_client_ip(request: Request) -> Optional[str]:
-    forwarded_for = request.headers.get("x-forwarded-for")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    if request.client:
-        return request.client.host
-    return None
-
-
-async def _check_consent_if_required(session_id: str):
-    """Check consent is recorded for a session when consent tracking is enabled.
-
-    Raises HTTP 428 (Precondition Required) if consent is missing.
-    """
-    if not settings.consent_tracking_enabled:
-        return
-    async with AsyncSessionLocal() as db:
-        record = await crud.get_consent_for_session(db, session_id)
-        if not record or record.revoked:
-            raise HTTPException(
-                status_code=428,
-                detail="Patient consent required before intake processing. "
-                       "Record consent via POST /api/auth/consent/record first.",
-            )
-
-
-def _derive_audit_resource(path: str) -> tuple[str, Optional[str]]:
-    parts = [segment for segment in path.split("/") if segment]
-    if not parts:
-        return "unknown", None
-    if parts[0] == "api":
-        if len(parts) == 1:
-            return "api", None
-        resource = parts[1]
-        resource_id = parts[2] if len(parts) > 2 else None
-        return resource, resource_id
-    return parts[0], parts[1] if len(parts) > 1 else None
-
-
-def _derive_audit_action(method: str, path: str) -> str:
-    method_upper = method.upper()
-    if method_upper == "GET":
-        return "read"
-    if method_upper == "POST":
-        return "create"
-    if method_upper in {"PUT", "PATCH"}:
-        return "update"
-    if method_upper == "DELETE":
-        return "delete"
-    return method_lower if (method_lower := method.lower()) else "access"
-
-
-async def _write_audit_log(
-    *,
-    request_path: str,
-    request_method: str,
-    status_code: int,
-    user=None,
-    ip_address: Optional[str] = None,
-    user_agent: Optional[str] = None,
-    details: Optional[str] = None,
-    data_access_type: Optional[str] = None,
-    phi_accessed: bool = False,
-) -> None:
-    if not settings.audit_logging_enabled:
-        return
-
-    resource, resource_id = _derive_audit_resource(request_path)
-    action = _derive_audit_action(request_method, request_path)
-
-    # Auto-detect data access type from action if not explicitly provided
-    if data_access_type is None:
-        data_access_type = {
-            "read": "read",
-            "create": "write",
-            "update": "write",
-            "delete": "delete",
-        }.get(action)
-
-    cid = correlation_id_var.get()
-
-    async with AsyncSessionLocal() as audit_db:
-        try:
-            await crud.create_audit_log(
-                db=audit_db,
-                user_id=getattr(user, "id", None),
-                username=getattr(user, "username", None),
-                role=getattr(user, "role", None),
-                action=action,
-                resource=resource,
-                resource_id=resource_id,
-                endpoint=request_path,
-                http_method=request_method.upper(),
-                status_code=status_code,
-                ip_address=ip_address,
-                user_agent=user_agent,
-                details=details,
-                data_access_type=data_access_type,
-                phi_accessed=phi_accessed,
-                correlation_id=cid,
-            )
-        except Exception as exc:
-            logger.warning(f"Failed to write audit log: {exc}")
-
-
-# NOTE: Custom HTTP middleware (metrics, audit) removed to avoid
-# BaseHTTPMiddleware compatibility issues with certain environments.
-# Metrics and audit logging are handled at the endpoint level instead.
+# Audit helpers moved to app/middleware/audit.py
+# Backward-compatible aliases for any in-file references
+_extract_client_ip = extract_client_ip
+_check_consent_if_required = check_consent_if_required
+_write_audit_log = write_audit_log
 
 
 # Shutdown event
@@ -396,6 +212,10 @@ async def shutdown_event():
 async def startup_event():
     """Preload ML models at server startup and init DB."""
     logger.info("Starting server initialization...")
+
+    # Phase 1: Validate security configuration before anything else
+    validate_production_settings()
+
     try:
         # Init DB tables
         logger.info("Initializing database tables...")
@@ -635,15 +455,6 @@ async def transcribe_audio(
 
 
 # Follow-up questions endpoint
-class IntakeQuestionsRequest(BaseModel):
-    transcript: str
-    detected_language: Optional[str] = "en"
-
-
-class IntakeQuestionsResponse(BaseModel):
-    questions: List[str]
-
-
 @app.post("/api/intake/questions", response_model=IntakeQuestionsResponse)
 async def get_intake_followup_questions(
     request: IntakeQuestionsRequest,
@@ -672,6 +483,15 @@ async def get_intake_followup_questions(
             raise HTTPException(
                 status_code=400,
                 detail="Transcript too short (minimum 10 characters required)",
+            )
+
+        # Prompt injection scan
+        scan = scan_input(request.transcript)
+        if not scan.is_safe:
+            logger.warning(f"Prompt injection blocked in followup endpoint: {scan.summary()}")
+            raise HTTPException(
+                status_code=422,
+                detail="Input contains patterns that cannot be processed safely.",
             )
 
         medgemma = get_medgemma_service()
@@ -733,6 +553,24 @@ async def generate_documentation(
                 status_code=400,
                 detail="Transcript too short (minimum 10 characters required)"
             )
+
+        # Prompt injection scan on transcript and follow-up answers
+        scan = scan_input(request.transcript)
+        if not scan.is_safe:
+            logger.warning(f"Prompt injection blocked in document endpoint: {scan.summary()}")
+            raise HTTPException(
+                status_code=422,
+                detail="Input contains patterns that cannot be processed safely.",
+            )
+        if request.followup_qa:
+            for qa in request.followup_qa:
+                qa_scan = scan_input(qa.answer)
+                if not qa_scan.is_safe:
+                    logger.warning(f"Prompt injection in follow-up answer: {qa_scan.summary()}")
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Follow-up answer contains patterns that cannot be processed safely.",
+                    )
 
         # Retrieve similar past cases + clinical guidelines for RAG context
         rag_context = rag_service.retrieve_enriched_context(request.transcript)
@@ -1116,6 +954,82 @@ def decode_webm_chunk(webm_bytes: bytes, sample_rate: int = 16000) -> Optional[n
     except Exception as e:
         logger.debug(f"WebM decode failed: {e}")
         return None
+
+
+@app.websocket("/ws/soap-stream")
+async def websocket_soap_stream(websocket: WebSocket):
+    """
+    WebSocket endpoint for streaming SOAP note generation.
+
+    Client sends a JSON message with transcript, subjective_data, and optional
+    context (similar_cases, guidelines, etc.). Server streams back SOAP tokens
+    as they are generated, allowing real-time progressive display.
+
+    Protocol:
+        Client -> Server: JSON {transcript, subjective_data, ...}
+        Server -> Client: JSON {type: "token", text: "..."} per chunk
+        Server -> Client: JSON {type: "complete", full_text: "..."} on finish
+        Server -> Client: JSON {type: "error", detail: "..."} on failure
+    """
+    await websocket.accept()
+    ACTIVE_CONNECTIONS.inc()
+
+    try:
+        # Receive the generation request
+        data = await websocket.receive_json()
+        transcript = data.get("transcript", "")
+        subjective_data = data.get("subjective_data", {})
+        detected_language = data.get("detected_language", "en")
+        specialty = data.get("specialty", "general")
+
+        if not transcript:
+            await websocket.send_json({"type": "error", "detail": "Missing transcript"})
+            return
+
+        # Prompt injection scan
+        scan = scan_input(transcript)
+        if not scan.is_safe:
+            await websocket.send_json({
+                "type": "error",
+                "detail": "Input contains patterns that cannot be processed safely.",
+            })
+            return
+
+        medgemma = get_medgemma_service()
+        if not medgemma.is_ready():
+            await websocket.send_json({"type": "error", "detail": "MedGemma model not ready"})
+            return
+
+        full_text = ""
+        for chunk in medgemma.generate_soap_streaming(
+            transcript=transcript,
+            subjective_data=subjective_data,
+            detected_language=detected_language,
+            specialty=specialty,
+        ):
+            full_text += chunk
+            await websocket.send_json({"type": "token", "text": chunk})
+
+        # Send completion message with full text
+        await websocket.send_json({
+            "type": "complete",
+            "full_text": full_text,
+        })
+
+    except WebSocketDisconnect:
+        logger.info("SOAP stream WebSocket disconnected")
+    except Exception as e:
+        logger.error(f"SOAP streaming error: {e}")
+        try:
+            await websocket.send_json({"type": "error", "detail": str(e)})
+        except Exception:
+            pass
+    finally:
+        ACTIVE_CONNECTIONS.dec()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @app.websocket("/ws/transcribe")

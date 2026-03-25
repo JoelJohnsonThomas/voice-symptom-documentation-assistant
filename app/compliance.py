@@ -209,15 +209,25 @@ def redact_for_vector_store(text: str) -> Tuple[str, Dict[str, Any]]:
     Redact PHI from text destined for the vector store, returning
     both the redacted text and a verification report.
 
-    This is the primary function used by the RAG service for PHI-safe
-    embedding (Phase 3.1).
+    Uses Presidio NER-based detection (if available) for comprehensive
+    coverage including patient names and addresses, with regex fallback.
     """
-    redacted = redact_phi_text(text)
-    verification = verify_phi_redacted(redacted)
-
-    if not verification["is_clean"]:
-        # Double-pass: aggressive second redaction
-        redacted = redact_phi_text(redacted)
+    try:
+        from app.security.phi_detector import get_phi_detector
+        detector = get_phi_detector()
+        redacted, scan_result = detector.redact_for_storage(text)
+        verification = {
+            "is_clean": scan_result.is_clean,
+            "phi_count": scan_result.detection_count,
+            "pattern_types": scan_result.entity_types_found,
+            "method": scan_result.method,
+        }
+        return redacted, verification
+    except Exception:
+        # Fallback to regex-only if Presidio import fails
+        redacted = redact_phi_text(text)
         verification = verify_phi_redacted(redacted)
-
-    return redacted, verification
+        if not verification["is_clean"]:
+            redacted = redact_phi_text(redacted)
+            verification = verify_phi_redacted(redacted)
+        return redacted, verification

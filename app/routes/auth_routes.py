@@ -28,6 +28,9 @@ from app.auth import (
     get_current_user,
     hash_password,
     hash_token,
+    _check_login_rate_limit,
+    _record_failed_login,
+    _clear_login_attempts,
     require_roles,
     verify_password,
 )
@@ -180,6 +183,11 @@ async def login(
     with ``mfa_token`` + ``totp_code`` is required."""
     _require_auth_enabled()
 
+    # Brute-force protection: rate limit by username and IP
+    client_ip = request.client.host if request.client else "unknown"
+    _check_login_rate_limit(f"user:{body.username}")
+    _check_login_rate_limit(f"ip:{client_ip}")
+
     # --- MFA second step ---
     if body.mfa_token and body.totp_code:
         payload = decode_token(body.mfa_token)
@@ -199,6 +207,8 @@ async def login(
     # --- Normal password step ---
     user = await crud.get_user_by_username(db, body.username)
     if not user or not verify_password(body.password, user.hashed_password):
+        _record_failed_login(f"user:{body.username}")
+        _record_failed_login(f"ip:{client_ip}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
@@ -227,6 +237,9 @@ async def login(
             "message": "MFA verification required",
         }
 
+    # Clear rate limit on successful login
+    _clear_login_attempts(f"user:{body.username}")
+    _clear_login_attempts(f"ip:{client_ip}")
     return await _issue_tokens(user, request, db)
 
 

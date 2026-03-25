@@ -1,12 +1,21 @@
 """Application configuration using Pydantic settings."""
 
+import logging
+import sys
+
 from pydantic_settings import BaseSettings
 from typing import Literal
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
-    
+
+    # Deployment Mode: "development" or "production"
+    # In production mode, security features are enforced and insecure defaults are rejected.
+    deployment_mode: Literal["development", "production"] = "development"
+
     # Hugging Face
     hf_token: str = ""
     
@@ -186,9 +195,19 @@ class Settings(BaseSettings):
     consent_tracking_enabled: bool = True         # Require verbal consent before intake
     cors_allowed_origins: str = "*"               # Comma-separated origins; "*" for dev
 
+    # OAuth2/OIDC SSO (Phase 1)
+    oidc_enabled: bool = False                     # Enable OIDC login flow
+    oidc_issuer_url: str = ""                      # e.g. https://accounts.google.com or https://login.microsoftonline.com/{tenant}/v2.0
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_redirect_uri: str = ""                    # e.g. https://your-app.com/api/auth/oidc/callback
+    oidc_scopes: str = "openid email profile"      # Space-separated scopes
+    oidc_role_claim: str = "role"                   # OIDC claim that maps to UserRole
+    oidc_default_role: str = "viewer"               # Default role for new OIDC users
+
     # Logging
     log_level: str = "INFO"
-    
+
     class Config:
         env_file = ".env"
         case_sensitive = False
@@ -196,3 +215,75 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
+
+
+# ---------------------------------------------------------------------------
+# Production-mode startup validation
+# ---------------------------------------------------------------------------
+
+_INSECURE_DEFAULTS = {"CHANGE_ME_IN_PRODUCTION", "", "changeme", "secret"}
+
+
+def validate_production_settings() -> None:
+    """Validate that security-critical settings are configured for production.
+
+    Called during application startup. In production mode, insecure defaults
+    cause a hard failure. In development mode, they emit warnings.
+    """
+    is_prod = settings.deployment_mode == "production"
+    issues: list[str] = []
+
+    # --- Secrets must not be default values ---
+    if settings.jwt_secret_key.lower() in _INSECURE_DEFAULTS:
+        issues.append(
+            "JWT_SECRET_KEY is set to an insecure default. "
+            "Generate a strong random secret (e.g. `openssl rand -hex 32`)."
+        )
+
+    if settings.encryption_master_key.lower() in _INSECURE_DEFAULTS:
+        issues.append(
+            "ENCRYPTION_MASTER_KEY is set to an insecure default. "
+            "Generate a strong random secret for HIPAA encryption at rest."
+        )
+
+    # --- Production requires security features enabled ---
+    if is_prod:
+        if not settings.auth_enabled:
+            issues.append("AUTH_ENABLED must be True in production mode.")
+
+        if not settings.encryption_at_rest_enabled:
+            issues.append("ENCRYPTION_AT_REST_ENABLED must be True in production mode.")
+
+        if not settings.audit_logging_enabled:
+            issues.append("AUDIT_LOGGING_ENABLED must be True in production mode.")
+
+        if settings.cors_allowed_origins.strip() == "*":
+            issues.append(
+                "CORS_ALLOWED_ORIGINS must not be '*' in production mode. "
+                "Specify allowed origins explicitly."
+            )
+
+        if not settings.metrics_endpoint_auth_required:
+            issues.append(
+                "METRICS_ENDPOINT_AUTH_REQUIRED should be True in production "
+                "to prevent information leakage via /metrics."
+            )
+
+    # --- Report ---
+    if issues:
+        header = (
+            "FATAL: Production security validation failed"
+            if is_prod
+            else "WARNING: Insecure configuration detected (development mode)"
+        )
+        msg = f"\n{'=' * 60}\n{header}\n{'=' * 60}\n"
+        for i, issue in enumerate(issues, 1):
+            msg += f"  {i}. {issue}\n"
+        msg += "=" * 60
+
+        if is_prod:
+            # Hard-fail in production — do not start with insecure config
+            print(msg, file=sys.stderr)
+            sys.exit(1)
+        else:
+            logger.warning(msg)

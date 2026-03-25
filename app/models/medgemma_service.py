@@ -1233,6 +1233,108 @@ class MedGemmaService:
             raise
 
 
+    # ------------------------------------------------------------------
+    # Streaming SOAP generation (Phase 1 enhancement)
+    # ------------------------------------------------------------------
+
+    def generate_soap_streaming(
+        self,
+        transcript: str,
+        subjective_data: dict,
+        detected_language: str = "en",
+        similar_cases: Optional[List[Dict[str, Any]]] = None,
+        clinical_guidelines: Optional[List[Dict[str, Any]]] = None,
+        drug_interactions: Optional[List[Dict[str, Any]]] = None,
+        icd10_suggestions: Optional[List[Dict[str, Any]]] = None,
+        specialty: str = "general",
+    ):
+        """Stream SOAP note generation token-by-token using TextIteratorStreamer.
+
+        Yields text chunks as they are generated, allowing real-time display
+        in the frontend via WebSocket.
+
+        Args:
+            transcript: Original patient statement.
+            subjective_data: Already-extracted subjective data dict.
+            detected_language: ISO language code.
+            similar_cases: RAG-retrieved similar cases.
+            clinical_guidelines: RAG-retrieved clinical guidelines.
+            drug_interactions: Flagged drug interactions.
+            icd10_suggestions: Matched ICD-10 codes.
+            specialty: Clinical specialty for template selection.
+
+        Yields:
+            str: Text chunks as they are generated.
+        """
+        import threading
+        from transformers import TextIteratorStreamer
+        from app.prompts.documentation_prompts import create_soap_oap_prompt
+
+        if self.model is None or self.tokenizer is None:
+            yield "Error: MedGemma model not loaded."
+            return
+
+        prompt_content = create_soap_oap_prompt(
+            transcript=transcript,
+            subjective_data=subjective_data,
+            language=detected_language,
+            similar_cases=similar_cases,
+            clinical_guidelines=clinical_guidelines,
+            drug_interactions=drug_interactions,
+            icd10_suggestions=icd10_suggestions,
+            specialty=specialty,
+            include_differentials=settings.differential_diagnosis_enabled,
+        )
+
+        messages = [{"role": "user", "content": prompt_content}]
+        prompt = self.tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+
+        inputs = self.tokenizer(
+            prompt, return_tensors="pt", padding=True
+        ).to(self.model.device)
+
+        # Set up the streamer
+        streamer = TextIteratorStreamer(
+            self.tokenizer,
+            skip_prompt=True,
+            skip_special_tokens=True,
+        )
+
+        generation_kwargs = {
+            **inputs,
+            "max_new_tokens": settings.medgemma_max_tokens,
+            "do_sample": False,
+            "repetition_penalty": settings.medgemma_repetition_penalty,
+            "pad_token_id": self.tokenizer.eos_token_id,
+            "streamer": streamer,
+        }
+
+        # Run generation in a background thread so the streamer can yield tokens
+        thread = threading.Thread(
+            target=self._generate_in_thread,
+            args=(generation_kwargs,),
+            daemon=True,
+        )
+        thread.start()
+
+        # Yield tokens from the streamer as they arrive
+        for text_chunk in streamer:
+            if text_chunk:
+                yield text_chunk
+
+        thread.join(timeout=120)
+
+    def _generate_in_thread(self, generation_kwargs: dict) -> None:
+        """Run model.generate in a background thread for streaming."""
+        try:
+            with torch.inference_mode():
+                self.model.generate(**generation_kwargs)
+        except Exception as e:
+            logger.error(f"Streaming generation error: {e}")
+
+
 # Global instance (singleton pattern)
 _medgemma_service = None
 

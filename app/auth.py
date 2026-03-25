@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 import uuid
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+from threading import Lock
 from typing import Optional
 
 import jwt
@@ -23,6 +26,102 @@ from app.config import settings
 from app.db.database import get_db
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Login rate limiting (brute-force protection)
+# ---------------------------------------------------------------------------
+
+_login_attempts: dict[str, list[float]] = defaultdict(list)
+_login_lock = Lock()
+_LOGIN_WINDOW_SECONDS = 300  # 5-minute window
+_LOGIN_MAX_ATTEMPTS = 5      # Max failures before lockout
+_LOGIN_LOCKOUT_SECONDS = 900  # 15-minute lockout after exceeding max
+
+
+def _check_login_rate_limit(identifier: str) -> None:
+    """Check if a login identifier (username or IP) is rate-limited.
+
+    Raises HTTPException 429 if too many failed attempts.
+    """
+    now = time.monotonic()
+
+    with _login_lock:
+        # Clean old entries
+        _login_attempts[identifier] = [
+            ts for ts in _login_attempts[identifier]
+            if now - ts < _LOGIN_LOCKOUT_SECONDS
+        ]
+
+        recent = [
+            ts for ts in _login_attempts[identifier]
+            if now - ts < _LOGIN_WINDOW_SECONDS
+        ]
+
+        if len(recent) >= _LOGIN_MAX_ATTEMPTS:
+            logger.warning(f"Login rate limit exceeded for: {identifier}")
+            raise HTTPException(
+                status_code=429,
+                detail="Too many failed login attempts. Please try again later.",
+                headers={"Retry-After": str(_LOGIN_LOCKOUT_SECONDS)},
+            )
+
+
+def _record_failed_login(identifier: str) -> None:
+    """Record a failed login attempt for rate limiting."""
+    with _login_lock:
+        _login_attempts[identifier].append(time.monotonic())
+
+
+def _clear_login_attempts(identifier: str) -> None:
+    """Clear failed login attempts after successful login."""
+    with _login_lock:
+        _login_attempts.pop(identifier, None)
+
+
+# ---------------------------------------------------------------------------
+# Server-side session activity tracking
+# ---------------------------------------------------------------------------
+
+_session_last_activity: dict[str, float] = {}
+_session_lock = Lock()
+
+
+def _update_session_activity(user_id: str) -> None:
+    """Record a user's last activity timestamp for server-side timeout."""
+    with _session_lock:
+        _session_last_activity[user_id] = time.monotonic()
+
+
+def _check_session_timeout(user_id: str) -> None:
+    """Check if a user's session has exceeded the inactivity timeout.
+
+    Raises HTTPException 401 if the session is expired.
+    """
+    if settings.session_inactivity_timeout_minutes <= 0:
+        return  # Timeout disabled
+
+    with _session_lock:
+        last_activity = _session_last_activity.get(user_id)
+
+    if last_activity is None:
+        # First request — initialize
+        _update_session_activity(user_id)
+        return
+
+    elapsed_minutes = (time.monotonic() - last_activity) / 60
+    if elapsed_minutes > settings.session_inactivity_timeout_minutes:
+        logger.info(f"Session timeout for user {user_id} after {elapsed_minutes:.1f} min inactivity")
+        # Clear the session
+        with _session_lock:
+            _session_last_activity.pop(user_id, None)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired due to inactivity. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Update activity
+    _update_session_activity(user_id)
 
 # ---------------------------------------------------------------------------
 # Roles
@@ -188,7 +287,36 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # Server-side session inactivity timeout
+    _check_session_timeout(str(user.id))
+
     return user
+
+
+# ---------------------------------------------------------------------------
+# TOTP secret encryption helpers
+# ---------------------------------------------------------------------------
+
+def encrypt_totp_secret(plaintext_secret: str) -> str:
+    """Encrypt a TOTP secret before storing in the database.
+
+    Uses the application's encryption module (AES-256-GCM) when
+    encryption at rest is enabled. Otherwise returns the secret as-is.
+    """
+    try:
+        from app.encryption import encrypt_data
+        return encrypt_data(plaintext_secret)
+    except Exception:
+        return plaintext_secret
+
+
+def decrypt_totp_secret(stored_secret: str) -> str:
+    """Decrypt a TOTP secret retrieved from the database."""
+    try:
+        from app.encryption import decrypt_data
+        return decrypt_data(stored_secret)
+    except Exception:
+        return stored_secret
 
 
 def require_roles(*roles: UserRole):
