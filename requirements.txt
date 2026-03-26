@@ -72,6 +72,15 @@ faster-whisper>=1.0.0     # CTranslate2-based Whisper (4x faster, word timestamp
 # Phase 2: Real Medical Coding (optional, ~4GB memory)
 # scispacy[linker]        # UMLS entity linker for ICD-10/SNOMED
 
+# Phase 3: Agentic Automation
+# langgraph>=0.2.0         # Multi-agent orchestration (optional)
+# nats-py>=2.7.0           # NATS JetStream event bus (optional)
+# grpcio>=1.62.0           # gRPC microservice communication (optional)
+# grpcio-tools>=1.62.0     # Proto compilation (optional)
+# peft>=0.11.0             # LoRA fine-tuning (optional, GPU recommended)
+# trl>=0.9.0               # SFT Trainer for LoRA (optional)
+# datasets>=2.19.0         # HuggingFace datasets for training (optional)
+
 # Infrastructure (Phase 8)
 asyncpg>=0.29.0           # PostgreSQL async driver
 redis[hiredis]>=5.0.0     # Redis cache + task queue

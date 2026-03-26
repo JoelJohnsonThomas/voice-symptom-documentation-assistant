@@ -1,0 +1,148 @@
+// NER Microservice Proto Definition (Phase 3)
+// Handles medical entity extraction, vitals parsing, and UMLS code linking.
+
+syntax = "proto3";
+
+package voice_triage.ner;
+
+option go_package = "github.com/voice-triage/ner/proto";
+
+// =====================================================================
+// NER Service
+// =====================================================================
+
+service NERService {
+  // Extract medical entities (conditions, medications) from text
+  rpc ExtractEntities(EntityExtractionRequest) returns (EntityExtractionResponse);
+
+  // Extract vital signs from text
+  rpc ExtractVitals(VitalsExtractionRequest) returns (VitalsExtractionResponse);
+
+  // Resolve entity text to UMLS/ICD-10/SNOMED codes
+  rpc ResolveCode(CodeResolutionRequest) returns (CodeResolutionResponse);
+
+  // Batch entity extraction for multiple text segments
+  rpc BatchExtract(BatchExtractionRequest) returns (BatchExtractionResponse);
+
+  // PHI detection and redaction
+  rpc DetectPHI(PHIDetectionRequest) returns (PHIDetectionResponse);
+
+  // Health check
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// =====================================================================
+// Messages
+// =====================================================================
+
+message EntityExtractionRequest {
+  string text = 1;
+  bool include_umls_codes = 2;     // Resolve UMLS codes (slower)
+  int32 max_entities = 3;          // Max entities to return (0 = unlimited)
+}
+
+message EntityExtractionResponse {
+  repeated MedicalEntity conditions = 1;
+  repeated MedicalEntity medications = 2;
+  repeated MedicalEntity procedures = 3;
+  float processing_time = 4;
+}
+
+message MedicalEntity {
+  string text = 1;                 // Surface form
+  string code = 2;                 // Best code (ICD-10, RxNorm, SNOMED)
+  string system = 3;               // Code system name
+  float confidence = 4;            // Code resolution confidence
+  int32 start_char = 5;           // Character offset in source text
+  int32 end_char = 6;
+  string entity_label = 7;         // NER label (DISEASE, CHEMICAL, etc.)
+  repeated CodeCandidate alternatives = 8; // Alternative codes
+}
+
+message CodeCandidate {
+  string code = 1;
+  string system = 2;
+  string description = 3;
+  float confidence = 4;
+  string cui = 5;                  // UMLS Concept Unique Identifier
+}
+
+message VitalsExtractionRequest {
+  string text = 1;
+}
+
+message VitalsExtractionResponse {
+  VitalSign temperature = 1;
+  BloodPressure blood_pressure = 2;
+  VitalSign heart_rate = 3;
+  VitalSign respiratory_rate = 4;
+  VitalSign oxygen_saturation = 5;
+}
+
+message VitalSign {
+  bool detected = 1;
+  float value = 2;
+  string unit = 3;
+  string raw_text = 4;
+}
+
+message BloodPressure {
+  bool detected = 1;
+  int32 systolic = 2;
+  int32 diastolic = 3;
+  string unit = 4;
+  string raw_text = 5;
+}
+
+message CodeResolutionRequest {
+  string entity_text = 1;
+  string entity_type = 2;          // DISEASE, CHEMICAL, PROCEDURE
+  int32 max_candidates = 3;
+  float min_confidence = 4;
+}
+
+message CodeResolutionResponse {
+  repeated CodeCandidate candidates = 1;
+  float processing_time = 2;
+}
+
+message BatchExtractionRequest {
+  repeated string texts = 1;
+  bool include_umls_codes = 2;
+}
+
+message BatchExtractionResponse {
+  repeated EntityExtractionResponse results = 1;
+  float total_processing_time = 2;
+}
+
+message PHIDetectionRequest {
+  string text = 1;
+  bool redact = 2;                 // Return redacted version
+  repeated string entity_types = 3; // Filter to specific PHI types
+}
+
+message PHIDetectionResponse {
+  bool has_phi = 1;
+  repeated PHIEntity entities = 2;
+  string redacted_text = 3;        // Only if redact=true
+  int32 entity_count = 4;
+}
+
+message PHIEntity {
+  string entity_type = 1;          // PERSON, LOCATION, DATE, etc.
+  int32 start = 2;
+  int32 end = 3;
+  float score = 4;
+  string detection_method = 5;     // presidio, regex
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  bool bc5cdr_loaded = 2;
+  bool core_sci_loaded = 3;
+  bool umls_linker_available = 4;
+  bool phi_detector_available = 5;
+}

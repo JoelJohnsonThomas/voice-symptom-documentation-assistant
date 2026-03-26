@@ -1,0 +1,175 @@
+// LLM Microservice Proto Definition (Phase 3)
+// Handles SOAP generation, follow-up questions, and image analysis via MedGemma.
+
+syntax = "proto3";
+
+package voice_triage.llm;
+
+option go_package = "github.com/voice-triage/llm/proto";
+
+// =====================================================================
+// LLM Service
+// =====================================================================
+
+service LLMService {
+  // Generate full SOAP documentation from transcript
+  rpc GenerateDocumentation(DocumentationRequest) returns (DocumentationResponse);
+
+  // Stream SOAP generation token-by-token
+  rpc StreamDocumentation(DocumentationRequest) returns (stream TokenChunk);
+
+  // Generate follow-up questions
+  rpc GenerateFollowUpQuestions(FollowUpRequest) returns (FollowUpResponse);
+
+  // Generate OAP sections from existing Subjective data
+  rpc GenerateSOAPSections(SOAPSectionsRequest) returns (SOAPSectionsResponse);
+
+  // Analyze a clinical image
+  rpc AnalyzeImage(ImageAnalysisRequest) returns (ImageAnalysisResponse);
+
+  // Health check
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// =====================================================================
+// Messages
+// =====================================================================
+
+message DocumentationRequest {
+  string transcript = 1;
+  string language = 2;
+  string specialty = 3;                      // general, emergency, primary_care, etc.
+  repeated FollowUpQA followup_qa = 4;
+  repeated SimilarCase similar_cases = 5;    // RAG context
+  repeated ClinicalGuideline guidelines = 6;
+  repeated DrugInteraction interactions = 7;
+  repeated ICD10Suggestion icd10_codes = 8;
+  string image_description = 9;             // Pre-analyzed image findings
+}
+
+message DocumentationResponse {
+  string chief_complaint = 1;
+  SymptomDetails symptom_details = 2;
+  string soap_subjective = 3;
+  string soap_objective = 4;
+  string soap_assessment = 5;
+  string soap_plan = 6;
+  ConfidenceInfo confidence = 7;
+  ComplianceMetadata compliance = 8;
+  bool requires_clinician_review = 9;
+}
+
+message TokenChunk {
+  string token = 1;
+  string section = 2;                // Which SOAP section (S/O/A/P)
+  bool is_final = 3;
+  float token_probability = 4;
+}
+
+message FollowUpRequest {
+  string transcript = 1;
+  string language = 2;
+}
+
+message FollowUpResponse {
+  repeated string questions = 1;
+}
+
+message FollowUpQA {
+  string question = 1;
+  string answer = 2;
+}
+
+message SOAPSectionsRequest {
+  string transcript = 1;
+  map<string, string> subjective_data = 2;
+  string language = 3;
+  string specialty = 4;
+  repeated SimilarCase similar_cases = 5;
+  repeated ClinicalGuideline guidelines = 6;
+}
+
+message SOAPSectionsResponse {
+  string objective = 1;
+  string assessment = 2;
+  string plan = 3;
+  ConfidenceInfo logprob_confidence = 4;
+}
+
+message ImageAnalysisRequest {
+  bytes image_data = 1;
+  string content_type = 2;           // image/jpeg, image/png
+  string clinical_context = 3;       // Optional context from transcript
+}
+
+message ImageAnalysisResponse {
+  string body_area = 1;
+  string observations = 2;
+  string notable_features = 3;
+  float confidence = 4;
+}
+
+// Shared sub-messages
+
+message SymptomDetails {
+  repeated string symptoms_mentioned = 1;
+  string onset = 2;
+  string duration = 3;
+  string location = 4;
+  string quality = 5;
+  string severity_description = 6;
+  repeated string associated_symptoms = 7;
+  string aggravating_factors = 8;
+  string alleviating_factors = 9;
+}
+
+message ConfidenceInfo {
+  float overall_score = 1;
+  map<string, float> section_scores = 2;  // per SOAP section
+  string calibration_method = 3;           // rule_based_v1, logprob_v1
+  repeated string needs_verification = 4;
+}
+
+message ComplianceMetadata {
+  string system_role = 1;
+  string documentation_type = 2;
+  bool triage_capability = 3;
+  string review_requirement = 4;
+}
+
+message SimilarCase {
+  string document = 1;
+  float similarity = 2;
+  string retrieval_confidence = 3;
+  map<string, string> metadata = 4;
+}
+
+message ClinicalGuideline {
+  string document = 1;
+  string source = 2;
+  float similarity = 3;
+}
+
+message DrugInteraction {
+  repeated string drugs = 1;
+  string severity = 2;
+  string effect = 3;
+  string recommendation = 4;
+}
+
+message ICD10Suggestion {
+  string code = 1;
+  string description = 2;
+  float similarity = 3;
+  string validation_status = 4;
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string model_name = 2;
+  string device = 3;
+  float gpu_memory_used_mb = 4;
+  bool vision_available = 5;
+}

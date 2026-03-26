@@ -25,6 +25,7 @@ class ConversationMode(str, Enum):
     """Who is using the voice assistant."""
     PATIENT = "patient"
     CLINICIAN = "clinician"
+    AMBIENT = "ambient"  # Phase 3: passive ambient listening mode
 
 
 class ConversationTurn(BaseModel):

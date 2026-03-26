@@ -1,0 +1,109 @@
+// ASR Microservice Proto Definition (Phase 3)
+// Handles audio transcription via faster-whisper and speaker diarization.
+
+syntax = "proto3";
+
+package voice_triage.asr;
+
+option go_package = "github.com/voice-triage/asr/proto";
+
+// =====================================================================
+// ASR Service
+// =====================================================================
+
+service ASRService {
+  // Batch transcription of a complete audio segment
+  rpc Transcribe(TranscribeRequest) returns (TranscribeResponse);
+
+  // Streaming transcription — bidirectional stream of audio chunks
+  rpc StreamingTranscribe(stream AudioChunk) returns (stream PartialTranscript);
+
+  // Speaker diarization on a complete audio segment
+  rpc Diarize(DiarizeRequest) returns (DiarizeResponse);
+
+  // Combined transcription + diarization
+  rpc TranscribeAndDiarize(TranscribeRequest) returns (DiarizedTranscriptResponse);
+
+  // Health check
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// =====================================================================
+// Messages
+// =====================================================================
+
+message TranscribeRequest {
+  bytes audio_data = 1;           // Raw audio bytes (WAV/PCM)
+  int32 sample_rate = 2;          // Sample rate in Hz (default: 16000)
+  string language = 3;            // ISO 639-1 language code (empty = auto-detect)
+  string model_size = 4;          // Whisper model size: tiny, base, small, medium, large-v3
+  bool word_timestamps = 5;       // Return word-level timestamps
+  bool vad_filter = 6;            // Apply voice activity detection
+}
+
+message TranscribeResponse {
+  string text = 1;                // Full transcription text
+  string detected_language = 2;   // Detected language code
+  float language_probability = 3; // Language detection confidence
+  float duration = 4;             // Audio duration in seconds
+  repeated WordTimestamp words = 5; // Word-level timestamps
+  float processing_time = 6;      // Processing time in seconds
+}
+
+message WordTimestamp {
+  string word = 1;
+  float start = 2;                // Start time in seconds
+  float end = 3;                  // End time in seconds
+  float probability = 4;          // Token probability
+}
+
+message AudioChunk {
+  bytes data = 1;                 // Raw audio chunk
+  int32 sample_rate = 2;
+  bool is_final = 3;             // Last chunk in the stream
+  string session_id = 4;
+}
+
+message PartialTranscript {
+  string text = 1;                // Partial transcription
+  bool is_final = 2;              // Final result for this utterance
+  repeated WordTimestamp words = 3;
+  float stability = 4;            // Stability score (0-1)
+}
+
+message DiarizeRequest {
+  bytes audio_data = 1;
+  int32 sample_rate = 2;
+  int32 num_speakers = 3;         // Expected speakers (0 = auto-detect)
+  int32 min_speakers = 4;
+  int32 max_speakers = 5;
+  repeated WordTimestamp word_timestamps = 6; // For word-aligned diarization
+}
+
+message DiarizeResponse {
+  repeated DiarizedSegment segments = 1;
+  int32 num_speakers_detected = 2;
+  float processing_time = 3;
+}
+
+message DiarizedSegment {
+  string speaker = 1;             // Speaker label
+  float start = 2;                // Start time in seconds
+  float end = 3;                  // End time in seconds
+  string text = 4;                // Transcribed text for this segment
+  float confidence = 5;
+}
+
+message DiarizedTranscriptResponse {
+  TranscribeResponse transcription = 1;
+  DiarizeResponse diarization = 2;
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string model_loaded = 2;        // Model currently loaded
+  float gpu_memory_used_mb = 3;
+  int32 active_sessions = 4;
+}
