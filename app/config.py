@@ -205,6 +205,24 @@ class Settings(BaseSettings):
     oidc_role_claim: str = "role"                   # OIDC claim that maps to UserRole
     oidc_default_role: str = "viewer"               # Default role for new OIDC users
 
+    # Phase 4: Multi-region / Data Residency
+    data_region: str = "us-east-1"                   # Deployment region for PHI locality
+    allowed_data_regions: str = "us-east-1,us-west-2,eu-west-1"  # Comma-separated
+    enforce_data_residency: bool = False              # Reject cross-region data transfers
+    region_encryption_key_arn: str = ""               # AWS KMS ARN for region-specific encryption
+
+    # Phase 4: vLLM Serving
+    vllm_enabled: bool = False
+    vllm_url: str = "http://localhost:8001"
+    vllm_model: str = "google/medgemma-4b-it"
+
+    # Phase 4: OpenTelemetry
+    otel_enabled: bool = False
+    otel_endpoint: str = "http://localhost:4317"
+
+    # Phase 4: Wake Word
+    picovoice_access_key: str = ""
+
     # Logging
     log_level: str = "INFO"
 

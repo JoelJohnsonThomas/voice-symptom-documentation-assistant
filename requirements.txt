@@ -81,7 +81,17 @@ faster-whisper>=1.0.0     # CTranslate2-based Whisper (4x faster, word timestamp
 # trl>=0.9.0               # SFT Trainer for LoRA (optional)
 # datasets>=2.19.0         # HuggingFace datasets for training (optional)
 
-# Infrastructure (Phase 8)
+# Phase 4: Scale & Optimization
+# opentelemetry-sdk>=1.24.0                  # OTel tracing + metrics
+# opentelemetry-exporter-otlp-proto-grpc     # OTLP export
+# opentelemetry-instrumentation-fastapi      # FastAPI auto-instrumentation
+# optimum[onnxruntime]>=1.19.0               # ONNX export + quantization
+# onnxruntime>=1.17.0                        # ONNX Runtime (CPU)
+# onnxruntime-gpu>=1.17.0                    # ONNX Runtime (GPU/TensorRT)
+# vllm>=0.5.0                                # vLLM serving (GPU only)
+# pvporcupine>=3.0.0                         # Wake word detection (optional)
+
+# Infrastructure
 asyncpg>=0.29.0           # PostgreSQL async driver
 redis[hiredis]>=5.0.0     # Redis cache + task queue
 pyngrok>=7.0.0            # Colab ngrok tunneling

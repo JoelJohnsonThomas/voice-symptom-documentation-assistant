@@ -1,0 +1,244 @@
+# Voice Triage Assistant - Helm Values
+# Override these for your environment
+
+global:
+  region: us-east-1
+  environment: production  # development, staging, production
+  imagePullSecrets:
+    - name: ghcr-creds
+
+# =====================================================================
+# API Gateway / Main Service
+# =====================================================================
+api:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/voice-triage/api
+    tag: "4.0.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilization: 70
+    targetMemoryUtilization: 80
+  env:
+    DEPLOYMENT_MODE: production
+    AUTH_ENABLED: "true"
+    ENCRYPTION_AT_REST_ENABLED: "true"
+    AUDIT_LOGGING_ENABLED: "true"
+    CORS_ALLOWED_ORIGINS: "https://app.voicetriage.health"
+  envFrom:
+    - secretRef:
+        name: voice-triage-secrets
+  service:
+    type: ClusterIP
+    port: 8000
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+      nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+      nginx.ingress.kubernetes.io/websocket-services: voice-triage-api
+    hosts:
+      - host: api.voicetriage.health
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: voice-triage-tls
+        hosts:
+          - api.voicetriage.health
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 30
+    periodSeconds: 15
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+
+# =====================================================================
+# ASR Microservice (faster-whisper)
+# =====================================================================
+asr:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/voice-triage/asr
+    tag: "4.0.0"
+  resources:
+    requests:
+      cpu: "1"
+      memory: "2Gi"
+      nvidia.com/gpu: "1"
+    limits:
+      cpu: "4"
+      memory: "8Gi"
+      nvidia.com/gpu: "1"
+  env:
+    WHISPER_MODEL: large-v3
+    DEVICE: cuda
+    COMPUTE_TYPE: float16
+  service:
+    type: ClusterIP
+    port: 50051  # gRPC
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+
+# =====================================================================
+# LLM Microservice (MedGemma / vLLM)
+# =====================================================================
+llm:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/voice-triage/llm
+    tag: "4.0.0"
+  resources:
+    requests:
+      cpu: "2"
+      memory: "8Gi"
+      nvidia.com/gpu: "1"
+    limits:
+      cpu: "8"
+      memory: "32Gi"
+      nvidia.com/gpu: "1"
+  env:
+    MODEL_NAME: google/medgemma-4b-it
+    VLLM_ENABLED: "true"
+    MAX_MODEL_LEN: "2048"
+    GPU_MEMORY_UTILIZATION: "0.85"
+    QUANTIZATION: awq
+  service:
+    type: ClusterIP
+    port: 50052
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+
+# =====================================================================
+# NER Microservice (SciSpaCy + UMLS)
+# =====================================================================
+ner:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: ghcr.io/voice-triage/ner
+    tag: "4.0.0"
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "4Gi"
+    limits:
+      cpu: "2"
+      memory: "8Gi"
+  env:
+    UMLS_LINKER_ENABLED: "true"
+  service:
+    type: ClusterIP
+    port: 50053
+
+# =====================================================================
+# Data layer
+# =====================================================================
+postgresql:
+  enabled: true
+  auth:
+    existingSecret: voice-triage-secrets
+    secretKeys:
+      adminPasswordKey: POSTGRES_PASSWORD
+  primary:
+    persistence:
+      size: 50Gi
+      storageClass: gp3-encrypted
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+
+redis:
+  enabled: true
+  auth:
+    existingSecret: voice-triage-secrets
+    existingSecretPasswordKey: REDIS_PASSWORD
+  master:
+    persistence:
+      size: 10Gi
+      storageClass: gp3-encrypted
+
+nats:
+  enabled: true
+  nats:
+    jetstream:
+      enabled: true
+      memoryStore:
+        enabled: true
+        size: 1Gi
+      fileStore:
+        enabled: true
+        size: 10Gi
+        storageClassName: gp3-encrypted
+
+# =====================================================================
+# Observability
+# =====================================================================
+observability:
+  opentelemetry:
+    enabled: true
+    collectorEndpoint: http://otel-collector:4317
+  prometheus:
+    enabled: true
+    serviceMonitor: true
+  grafana:
+    dashboardsConfigMap: voice-triage-dashboards
+
+# =====================================================================
+# Security
+# =====================================================================
+security:
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+  networkPolicy:
+    enabled: true
+  secrets:
+    # These are references — actual values stored in External Secrets or Vault
+    jwtSecretKey: vault:voice-triage/jwt-secret
+    encryptionMasterKey: vault:voice-triage/encryption-key
+    hfToken: vault:voice-triage/hf-token
+    oidcClientSecret: vault:voice-triage/oidc-secret
+
+# =====================================================================
+# Multi-region / Data Residency
+# =====================================================================
+dataResidency:
+  enabled: false
+  region: us-east-1
+  allowedRegions:
+    - us-east-1
+    - us-west-2
+    - eu-west-1
+  encryptionKeyArn: ""  # AWS KMS ARN for region-specific encryption
