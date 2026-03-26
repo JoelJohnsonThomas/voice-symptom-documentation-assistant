@@ -109,95 +109,25 @@ Important extraction rules:
 
 
 # ---------------------------------------------------------------------------
-# Phase 5: Specialty-Specific SOAP Templates
+# Phase 5 -> Phase 2 upgrade: Specialty-Specific SOAP Templates
+# Now uses dedicated specialty modules in app/prompts/specialty/
 # ---------------------------------------------------------------------------
 
-SPECIALTY_PROMPTS = {
-    "emergency": {
-        "objective": (
-            "Focus on ABCs (Airway, Breathing, Circulation), GCS score, trauma survey "
-            "findings, point-of-care labs (troponin, lactate, blood gas), and ECG interpretation. "
-            "Note hemodynamic stability."
-        ),
-        "assessment": (
-            "Prioritize life-threatening differentials first. Use ESI-level language. "
-            "Include disposition recommendation (admit, observe, discharge)."
-        ),
-        "plan": (
-            "Include resuscitation steps if indicated, IV access, monitoring orders, "
-            "consult recommendations, and reassessment timeline."
-        ),
-    },
-    "primary_care": {
-        "objective": (
-            "Include preventive screening status, BMI, relevant chronic disease markers "
-            "(HbA1c, lipid panel dates), and immunization status if relevant."
-        ),
-        "assessment": (
-            "Consider chronic disease progression alongside acute presentation. "
-            "Note medication adherence concerns."
-        ),
-        "plan": (
-            "Include follow-up interval, medication adjustments, lifestyle modifications, "
-            "preventive care due, and referral indications."
-        ),
-    },
-    "psychiatry": {
-        "objective": (
-            "Document mental status exam: appearance, behavior, mood, affect, thought process, "
-            "thought content, cognition, insight, judgment. Note safety assessment (SI/HI)."
-        ),
-        "assessment": (
-            "Use DSM-5 diagnostic framework. Note symptom duration for diagnostic criteria. "
-            "Include functional impairment level."
-        ),
-        "plan": (
-            "Include psychotherapy modality, medication management with titration plan, "
-            "safety plan if indicated, and follow-up frequency."
-        ),
-    },
-    "ob_gyn": {
-        "objective": (
-            "Include LMP, gravida/para status if relevant, gestational age if pregnant. "
-            "Note cervical exam findings, fetal heart tones, fundal height as applicable."
-        ),
-        "assessment": (
-            "Consider obstetric vs gynecologic etiologies. Note pregnancy-specific "
-            "differential diagnoses and risk factors."
-        ),
-        "plan": (
-            "Include pregnancy-safe medication considerations, prenatal/postnatal care, "
-            "imaging appropriate for pregnancy status, and OB consultation thresholds."
-        ),
-    },
-    "pediatrics": {
-        "objective": (
-            "Include weight percentile, developmental milestones status, immunization status. "
-            "Note age-appropriate vital sign interpretation."
-        ),
-        "assessment": (
-            "Consider age-specific differentials. Note parental concern level. "
-            "Include growth and development assessment."
-        ),
-        "plan": (
-            "Include weight-based dosing notes, age-appropriate interventions, "
-            "return precautions for caregivers, and pediatric-specific referral criteria."
-        ),
-    },
-}
+from app.prompts.specialty import (
+    build_specialty_prompt_context,
+    detect_specialty,
+    get_missing_fields,
+    get_specialty_template,
+    SPECIALTY_REGISTRY,
+)
 
 
 def get_specialty_context(specialty: str) -> str:
-    """Build specialty-specific prompt additions."""
-    spec = SPECIALTY_PROMPTS.get(specialty)
-    if not spec:
-        return ""
-    return (
-        f"\nSPECIALTY CONTEXT ({specialty.upper().replace('_', ' ')}):\n"
-        f"- Objective focus: {spec['objective']}\n"
-        f"- Assessment focus: {spec['assessment']}\n"
-        f"- Plan focus: {spec['plan']}\n"
-    )
+    """Build specialty-specific prompt additions.
+
+    Delegates to the specialty module's build_specialty_prompt_context().
+    """
+    return build_specialty_prompt_context(specialty)
 
 
 # ---------------------------------------------------------------------------

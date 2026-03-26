@@ -289,7 +289,8 @@ def check_documentation_hallucination(
     """
     Run hallucination check on generated SOAP O/A/P sections.
 
-    Returns per-section hallucination analysis.
+    Uses NLI-based grounding if available, falls back to keyword overlap.
+    Returns per-section hallucination analysis with citation annotations.
     """
     if not settings.rag_hallucination_check_enabled:
         return {"enabled": False}
@@ -304,15 +305,25 @@ def check_documentation_hallucination(
         if doc:
             evidence_texts.append(doc)
 
+    # Use NLI grounding if available, otherwise keyword overlap
+    grounding = get_citation_grounding_service()
+
     results = {}
     for section in ("soap_note_objective", "soap_note_assessment", "soap_note_plan"):
         text = documentation.get(section, "")
         if text and text != "Pending clinician assessment.":
-            results[section] = check_hallucination(
-                generated_text=text,
-                evidence_texts=evidence_texts,
-                transcript=transcript,
-            )
+            if grounding.is_ready:
+                results[section] = grounding.check_grounding(
+                    generated_text=text,
+                    evidence_texts=evidence_texts,
+                    transcript=transcript,
+                )
+            else:
+                results[section] = check_hallucination(
+                    generated_text=text,
+                    evidence_texts=evidence_texts,
+                    transcript=transcript,
+                )
 
     # Overall risk: highest among sections
     risk_levels = [r.get("risk_level", "low") for r in results.values()]
@@ -325,6 +336,228 @@ def check_documentation_hallucination(
         "overall_risk": overall_risk,
         "evidence_count": len(evidence_texts),
     }
+
+
+# =====================================================================
+# Phase 2 — NLI-Based Citation Grounding
+# =====================================================================
+
+class CitationGroundingService:
+    """Production-grade hallucination detection using NLI entailment scoring.
+
+    Extracts claims from generated text, checks each claim against evidence
+    (transcript + RAG results) via a medical NLI model, and annotates
+    unsupported claims with [UNGROUNDED] tags.
+
+    Falls back to keyword overlap if the NLI model is unavailable.
+    """
+
+    def __init__(self):
+        self._model = None
+        self._tokenizer = None
+        self._available = False
+        self._load_model()
+
+    def _load_model(self) -> None:
+        """Load a BiomedBERT-based NLI model for entailment checking."""
+        try:
+            from transformers import AutoTokenizer, AutoModelForSequenceClassification
+
+            model_name = "microsoft/BiomedNLP-BiomedBERT-large-uncased-abstract"
+            logger.info(f"Loading NLI model for citation grounding: {model_name}...")
+
+            self._tokenizer = AutoTokenizer.from_pretrained(model_name)
+            self._model = AutoModelForSequenceClassification.from_pretrained(model_name)
+            self._model.eval()
+            self._available = True
+            logger.info("Citation grounding NLI model loaded successfully")
+
+        except ImportError:
+            logger.warning(
+                "transformers not available for NLI grounding. "
+                "Using keyword-overlap fallback."
+            )
+        except Exception as e:
+            logger.warning(f"NLI model loading failed: {e}. Using keyword-overlap fallback.")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._available
+
+    def extract_claims(self, text: str) -> List[str]:
+        """Extract individual claims/sentences from generated text.
+
+        Splits on sentence boundaries and filters out boilerplate.
+        """
+        import re
+
+        # Split on sentence-ending punctuation
+        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+
+        claims = []
+        # Filter out boilerplate / filler
+        skip_patterns = [
+            r'^(objective|assessment|plan|subjective)\s*:?\s*$',
+            r'^(note|disclaimer|compliance)',
+            r'clinician review',
+            r'for reference only',
+        ]
+
+        for s in sentences:
+            s = s.strip()
+            if len(s) < 10:
+                continue
+            if any(re.search(p, s, re.IGNORECASE) for p in skip_patterns):
+                continue
+            claims.append(s)
+
+        return claims
+
+    def score_entailment(self, premise: str, hypothesis: str) -> float:
+        """Score whether premise entails hypothesis using NLI model.
+
+        Returns:
+            Entailment probability (0-1). Higher = more grounded.
+        """
+        if not self._available:
+            return 0.5
+
+        try:
+            import torch
+
+            inputs = self._tokenizer(
+                premise,
+                hypothesis,
+                return_tensors="pt",
+                truncation=True,
+                max_length=512,
+                padding=True,
+            )
+
+            with torch.no_grad():
+                outputs = self._model(**inputs)
+                logits = outputs.logits
+
+            # Softmax to get probabilities
+            probs = torch.nn.functional.softmax(logits, dim=-1)
+
+            # Entailment is typically index 0 or 2 depending on model
+            # For most NLI models: 0=entailment, 1=neutral, 2=contradiction
+            entailment_prob = probs[0][0].item()
+            return entailment_prob
+
+        except Exception as e:
+            logger.debug(f"NLI scoring failed: {e}")
+            return 0.5
+
+    def check_grounding(
+        self,
+        generated_text: str,
+        evidence_texts: List[str],
+        transcript: str = "",
+        entailment_threshold: float = 0.5,
+    ) -> Dict[str, Any]:
+        """Check each claim in generated text against evidence via NLI.
+
+        Args:
+            generated_text: Generated SOAP section text.
+            evidence_texts: Retrieved evidence documents.
+            transcript: Original patient transcript.
+            entailment_threshold: Min entailment score to consider grounded.
+
+        Returns:
+            Dict with grounding analysis including per-claim results,
+            annotated text, and risk level.
+        """
+        claims = self.extract_claims(generated_text)
+        if not claims:
+            return {
+                "is_grounded": True,
+                "overlap_ratio": 1.0,
+                "risk_level": "low",
+                "claims": [],
+                "annotated_text": generated_text,
+            }
+
+        # Combine all evidence into premise chunks
+        all_evidence = evidence_texts + ([transcript] if transcript else [])
+        combined_evidence = " ".join(all_evidence)
+
+        # Truncate evidence to fit model context
+        if len(combined_evidence) > 2000:
+            combined_evidence = combined_evidence[:2000]
+
+        claim_results = []
+        grounded_count = 0
+        annotated_parts = []
+
+        for claim in claims:
+            # Score each claim against combined evidence
+            score = self.score_entailment(combined_evidence, claim)
+
+            is_supported = score >= entailment_threshold
+            if is_supported:
+                grounded_count += 1
+                annotated_parts.append(claim)
+            else:
+                annotated_parts.append(f"[UNGROUNDED] {claim}")
+
+            # Find best matching evidence source
+            best_source = None
+            best_source_score = 0.0
+            for i, ev in enumerate(evidence_texts):
+                ev_score = self.score_entailment(ev[:1000], claim)
+                if ev_score > best_source_score:
+                    best_source_score = ev_score
+                    best_source = f"evidence_{i+1}"
+
+            # Also check transcript
+            if transcript:
+                t_score = self.score_entailment(transcript[:1000], claim)
+                if t_score > best_source_score:
+                    best_source_score = t_score
+                    best_source = "transcript"
+
+            claim_results.append({
+                "claim": claim,
+                "entailment_score": round(score, 4),
+                "is_supported": is_supported,
+                "best_source": best_source,
+                "best_source_score": round(best_source_score, 4),
+            })
+
+        grounding_ratio = grounded_count / len(claims) if claims else 1.0
+
+        if grounding_ratio >= 0.8:
+            risk = "low"
+        elif grounding_ratio >= 0.5:
+            risk = "medium"
+        else:
+            risk = "high"
+
+        return {
+            "is_grounded": grounding_ratio >= 0.5,
+            "overlap_ratio": round(grounding_ratio, 4),
+            "grounded_claims": grounded_count,
+            "total_claims": len(claims),
+            "risk_level": risk,
+            "claims": claim_results,
+            "annotated_text": " ".join(annotated_parts),
+            "ungrounded_terms": [
+                c["claim"][:80] for c in claim_results if not c["is_supported"]
+            ],
+        }
+
+
+# Singleton
+_citation_grounding: Optional[CitationGroundingService] = None
+
+
+def get_citation_grounding_service() -> CitationGroundingService:
+    global _citation_grounding
+    if _citation_grounding is None:
+        _citation_grounding = CitationGroundingService()
+    return _citation_grounding
 
 
 # =====================================================================

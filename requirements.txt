@@ -60,6 +60,18 @@ alembic>=1.13.0
 # OAuth2/OIDC (Phase 1)
 authlib>=1.3.0
 
+# Phase 2: Faster ASR
+faster-whisper>=1.0.0     # CTranslate2-based Whisper (4x faster, word timestamps)
+
+# Phase 2: ML Diarization (optional, requires HF token)
+# pyannote.audio>=3.1.0   # Speaker diarization (<5% DER)
+
+# Phase 2: Voice Biometrics (optional)
+# speechbrain>=1.0.0      # ECAPA-TDNN speaker embeddings
+
+# Phase 2: Real Medical Coding (optional, ~4GB memory)
+# scispacy[linker]        # UMLS entity linker for ICD-10/SNOMED
+
 # Infrastructure (Phase 8)
 asyncpg>=0.29.0           # PostgreSQL async driver
 redis[hiredis]>=5.0.0     # Redis cache + task queue

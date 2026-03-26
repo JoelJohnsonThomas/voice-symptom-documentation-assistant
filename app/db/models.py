@@ -130,3 +130,72 @@ class DataExportLog(Base):
     ip_address = Column(String, nullable=True)
     status = Column(String, default="success")  # success, failed, partial
     details = Column(Text, nullable=True)
+
+
+# =====================================================================
+# Phase 2: Document Versioning & Collaborative Annotations
+# =====================================================================
+
+class DocumentVersion(Base):
+    """Versioned SOAP document with diff tracking.
+
+    Each edit to a SOAP note creates a new version, preserving full history
+    for audit compliance and collaborative editing.
+    """
+    __tablename__ = "document_versions"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id = Column(String, nullable=False, index=True)
+    version_number = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    # Author
+    author_id = Column(String, nullable=True, index=True)
+    author_username = Column(String, nullable=True)
+    author_role = Column(String, nullable=True)  # clinician, system, ai
+
+    # SOAP content (JSON blob with all sections)
+    content_json = Column(Text, nullable=False)
+
+    # Change tracking
+    diff_json = Column(Text, nullable=True)  # JSON diff from previous version
+    change_summary = Column(Text, nullable=True)  # Human-readable summary
+    change_type = Column(String, nullable=False, default="edit")  # initial, edit, ai_generated, review, correction
+
+    # Metadata
+    confidence_json = Column(Text, nullable=True)  # Confidence scores per section
+    is_encrypted = Column(Boolean, default=False, nullable=False)
+
+
+class DocumentAnnotation(Base):
+    """Inline annotation on a specific field of a SOAP document version.
+
+    Supports corrections, additions, questions, and approval markers
+    from collaborating clinicians.
+    """
+    __tablename__ = "document_annotations"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    document_version_id = Column(String, nullable=False, index=True)
+    session_id = Column(String, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    # Author
+    author_id = Column(String, nullable=True, index=True)
+    author_username = Column(String, nullable=True)
+
+    # Location within the SOAP note
+    soap_section = Column(String, nullable=False)  # subjective, objective, assessment, plan
+    field_path = Column(String, nullable=True)  # e.g., "symptom_details.onset"
+    text_offset_start = Column(Integer, nullable=True)  # Character offset in section text
+    text_offset_end = Column(Integer, nullable=True)
+
+    # Annotation content
+    annotation_type = Column(String, nullable=False)  # correction, addition, question, approval, flag
+    content = Column(Text, nullable=False)
+    suggested_replacement = Column(Text, nullable=True)  # For corrections
+
+    # Status
+    status = Column(String, default="open")  # open, resolved, rejected
+    resolved_by_id = Column(String, nullable=True)
+    resolved_at = Column(DateTime, nullable=True)

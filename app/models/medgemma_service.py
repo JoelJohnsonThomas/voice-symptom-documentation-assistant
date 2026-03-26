@@ -192,6 +192,191 @@ class MedGemmaService:
         calibrated = base_score + (0.04 * min(evidence_hits, 3)) - (0.06 * uncertainty_penalties)
         return round(max(0.05, min(0.99, calibrated)), 2)
 
+    # -----------------------------------------------------------------
+    # Phase 2: Log-Probability Confidence Calibration
+    # -----------------------------------------------------------------
+
+    def generate_with_confidence(
+        self,
+        prompt: str,
+        max_new_tokens: int = 512,
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Generate text and extract token-level log probabilities for confidence.
+
+        Uses model.generate(output_scores=True) to capture per-token logits,
+        then computes geometric mean probability as overall confidence.
+
+        Args:
+            prompt: Formatted prompt string.
+            max_new_tokens: Maximum tokens to generate.
+
+        Returns:
+            Tuple of (generated_text, confidence_info) where confidence_info
+            contains token-level and section-level confidence scores.
+        """
+        inputs = self.tokenizer(
+            prompt, return_tensors="pt", padding=True
+        ).to(self.model.device)
+
+        with torch.inference_mode():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                repetition_penalty=settings.medgemma_repetition_penalty,
+                pad_token_id=self.tokenizer.eos_token_id,
+                output_scores=True,
+                return_dict_in_generate=True,
+            )
+
+        # Decode generated text
+        generated_ids = outputs.sequences[0][inputs.input_ids.shape[1]:]
+        decoded = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+
+        # Extract per-token probabilities from scores
+        confidence_info = self._compute_logprob_confidence(
+            outputs.scores, generated_ids, decoded
+        )
+
+        return decoded, confidence_info
+
+    def _compute_logprob_confidence(
+        self,
+        scores: Tuple,
+        generated_ids: torch.Tensor,
+        decoded_text: str,
+    ) -> Dict[str, Any]:
+        """Compute confidence metrics from generation log probabilities.
+
+        Args:
+            scores: Tuple of logit tensors per generated token.
+            generated_ids: Token IDs of the generated sequence.
+            decoded_text: Decoded text string.
+
+        Returns:
+            Dict with overall and per-section confidence metrics.
+        """
+        import math
+
+        if not scores:
+            return {
+                "overall_confidence": 0.5,
+                "calibration": "logprob_v1",
+                "token_count": 0,
+            }
+
+        # Compute per-token probabilities
+        token_probs = []
+        for i, logits in enumerate(scores):
+            if i >= len(generated_ids):
+                break
+            probs = torch.nn.functional.softmax(logits[0], dim=-1)
+            token_id = generated_ids[i].item()
+            token_prob = probs[token_id].item()
+            token_probs.append(token_prob)
+
+        if not token_probs:
+            return {
+                "overall_confidence": 0.5,
+                "calibration": "logprob_v1",
+                "token_count": 0,
+            }
+
+        # Geometric mean of token probabilities (log-space for numerical stability)
+        log_probs = [math.log(max(p, 1e-10)) for p in token_probs]
+        geo_mean = math.exp(sum(log_probs) / len(log_probs))
+
+        # Per-section confidence (parse SOAP section headers from decoded text)
+        section_confidence = self._compute_section_confidence(
+            decoded_text, token_probs, generated_ids
+        )
+
+        # Apply temperature scaling calibration
+        calibrated = self._temperature_scale(geo_mean)
+
+        return {
+            "overall_confidence": round(calibrated, 4),
+            "raw_geometric_mean": round(geo_mean, 4),
+            "token_count": len(token_probs),
+            "min_token_prob": round(min(token_probs), 4),
+            "max_token_prob": round(max(token_probs), 4),
+            "median_token_prob": round(sorted(token_probs)[len(token_probs) // 2], 4),
+            "section_confidence": section_confidence,
+            "calibration": "logprob_v1",
+        }
+
+    def _compute_section_confidence(
+        self,
+        text: str,
+        token_probs: List[float],
+        generated_ids: torch.Tensor,
+    ) -> Dict[str, float]:
+        """Compute per-SOAP-section confidence from token probabilities.
+
+        Maps token positions to SOAP sections by finding section headers
+        in the decoded text.
+        """
+        import math
+        import re
+
+        sections: Dict[str, List[float]] = {}
+        current_section = "preamble"
+
+        # Decode each token to find section boundaries
+        tokens_decoded = []
+        for tid in generated_ids:
+            tokens_decoded.append(
+                self.tokenizer.decode([tid.item()], skip_special_tokens=True)
+            )
+
+        # Build cumulative text to find section transitions
+        cumulative = ""
+        for i, token_text in enumerate(tokens_decoded):
+            cumulative += token_text
+
+            # Detect SOAP section headers
+            lower_cum = cumulative.lower()
+            if "objective:" in lower_cum and current_section != "objective":
+                current_section = "objective"
+            elif "assessment:" in lower_cum and current_section != "assessment":
+                current_section = "assessment"
+            elif "plan:" in lower_cum and current_section != "plan":
+                current_section = "plan"
+            elif "subjective:" in lower_cum and current_section != "subjective":
+                current_section = "subjective"
+
+            if i < len(token_probs):
+                sections.setdefault(current_section, []).append(token_probs[i])
+
+        # Compute geometric mean per section
+        result = {}
+        for section_name, probs in sections.items():
+            if section_name == "preamble":
+                continue
+            if probs:
+                log_p = [math.log(max(p, 1e-10)) for p in probs]
+                geo = math.exp(sum(log_p) / len(log_p))
+                result[section_name] = round(self._temperature_scale(geo), 4)
+
+        return result
+
+    @staticmethod
+    def _temperature_scale(raw_confidence: float, temperature: float = 1.5) -> float:
+        """Apply temperature scaling for calibration.
+
+        Temperature > 1 softens overconfident predictions toward 0.5.
+        Trained offline; default T=1.5 is a reasonable prior.
+        """
+        import math
+
+        if raw_confidence <= 0 or raw_confidence >= 1:
+            return max(0.01, min(0.99, raw_confidence))
+
+        logit = math.log(raw_confidence / (1 - raw_confidence))
+        scaled_logit = logit / temperature
+        calibrated = 1 / (1 + math.exp(-scaled_logit))
+        return calibrated
+
     def _build_confidence_record(self, score: float, rationale: str) -> Dict[str, Any]:
         """Build standardized confidence metadata for one extracted field."""
         if score >= 0.80:
@@ -1055,17 +1240,32 @@ class MedGemmaService:
                 max_new_tokens=512,
                 do_sample=False,
                 repetition_penalty=settings.medgemma_repetition_penalty,
-                pad_token_id=self.tokenizer.eos_token_id
+                pad_token_id=self.tokenizer.eos_token_id,
+                output_scores=True,
+                return_dict_in_generate=True,
             )
-        
-        generated_ids = outputs[0][inputs.input_ids.shape[1]:]
+
+        generated_ids = outputs.sequences[0][inputs.input_ids.shape[1]:]
         decoded = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
-        
+
         self._safe_log_generated_text("MedGemma OAP response", decoded)
-        
+
         # Parse the three sections from model output
         result = self._parse_soap_sections(decoded)
-        
+
+        # Compute log-probability confidence for OAP sections
+        try:
+            logprob_confidence = self._compute_logprob_confidence(
+                outputs.scores, generated_ids, decoded
+            )
+            result["logprob_confidence"] = logprob_confidence
+            logger.info(
+                f"OAP logprob confidence: overall={logprob_confidence.get('overall_confidence', 'N/A')}, "
+                f"sections={logprob_confidence.get('section_confidence', {})}"
+            )
+        except Exception as e:
+            logger.debug(f"Logprob confidence extraction failed: {e}")
+
         return result
     
     def _parse_soap_sections(self, text: str) -> dict:
