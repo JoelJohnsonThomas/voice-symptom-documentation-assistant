@@ -6,6 +6,8 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![MedGemma](https://img.shields.io/badge/MedGemma-1.5--4b-4285F4?logo=google&logoColor=white)](https://huggingface.co/google/medgemma-1.5-4b-it)
 [![FHIR R4](https://img.shields.io/badge/FHIR-R4-E74C3C)](https://hl7.org/fhir/R4/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-2ea44f)](LICENSE)
@@ -29,6 +31,7 @@
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
 - [Installation](#installation)
+- [React Frontend](#react-frontend)
 - [Configuration](#configuration)
 - [Usage](#usage)
 - [API Reference](#api-reference)
@@ -48,6 +51,8 @@
 VoxDoc transforms the patient intake process by converting voice, text, and image inputs into structured clinical documentation — reducing manual data entry burden for clinicians and intake staff.
 
 The pipeline combines medical-grade ASR, a multimodal language model (MedGemma), and biomedical NER to produce SOAP notes, extract clinical entities, and export FHIR R4-compliant bundles ready for EHR integration — all within a HIPAA-aligned application framework.
+
+The frontend is a fully-featured React 19 application with the **Clinical Glass** design system — a dark-mode glassmorphism UI with 6 themes, real-time WebSocket integration, and a complete SOAP note review workflow.
 
 **Who this is for:** AI/ML engineers building healthcare tooling, clinical informatics teams exploring LLM automation, and developers evaluating medical AI pipelines.
 
@@ -69,7 +74,8 @@ The pipeline combines medical-grade ASR, a multimodal language model (MedGemma),
 | **Audit Logging** | Structured access audit trail (user, resource, timestamp, status) |
 | **Observability** | Prometheus-compatible metrics, structured JSON logging with correlation IDs |
 | **Rate Limiting** | Sliding-window rate limiter + async inference queue with configurable concurrency |
-| **PWA Frontend** | Installable progressive web app with multi-theme UI and offline indicators |
+| **Clinical Glass UI** | React 19 frontend — 87 components, 6 themes, glassmorphism design, WCAG 2.1 AA |
+| **PWA** | Installable progressive web app with offline support and background sync |
 
 ---
 
@@ -95,7 +101,7 @@ flowchart LR
     E --> F
     F --> G[SQLite\nSession Store]
     F --> H[FHIR R4\nBundle Export / Push]
-    F --> I[Clinician Review\nWeb UI]
+    F --> I[React Frontend\nClinical Glass UI]
     B --> J[Rate Limiter\n+ Inference Queue]
     B --> K[Audit Logger\n+ Metrics]
 ```
@@ -106,7 +112,7 @@ flowchart LR
 3. The transcript is passed to MedGemma for structured SOAP generation.
 4. SciSpaCy runs parallel NER to extract conditions and medications.
 5. The combined output is persisted to SQLite and optionally exported as a FHIR R4 bundle.
-6. The clinician reviews the result in the web UI before any downstream action.
+6. The clinician reviews and approves the result in the React UI before any downstream action.
 
 ---
 
@@ -121,7 +127,8 @@ flowchart LR
 | **EHR Integration** | FHIR R4, httpx |
 | **Security** | cryptography (AES-256-GCM), PBKDF2 password hashing |
 | **Observability** | Prometheus-compatible metrics, structured JSON logging |
-| **Frontend** | HTML5, CSS3, Vanilla JavaScript, PWA (Service Worker, Web App Manifest) |
+| **Frontend** | React 19, TypeScript 5.5, Vite 6, TailwindCSS 4, Zustand 5, TanStack Query 5, Framer Motion 11 |
+| **UI Design** | Clinical Glass design system — glassmorphism, 6 themes, WCAG 2.1 AA |
 | **Deployment** | Docker (CPU + GPU profiles), Google Colab notebook |
 | **Config** | Pydantic Settings, python-dotenv |
 
@@ -155,12 +162,33 @@ voice-symptom-triage-assistant/
 │   │   └── documentation_prompts.py  # Prompt templates for MedGemma
 │   ├── utils/
 │   │   └── audio_handler.py       # Audio preprocessing utilities
-│   └── static/
+│   └── static/                    # Legacy vanilla JS frontend (served at /)
 │       ├── index.html
-│       ├── css/style.css
-│       ├── js/app.js
+│       ├── css/
+│       ├── js/
 │       ├── service-worker.js
 │       └── manifest.json
+├── frontend/                      # React 19 Clinical Glass UI
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── ui/                # 11 primitive components (GlassCard, Badge, Modal…)
+│   │   │   ├── layout/            # AppLayout, Sidebar, Header, UserCard
+│   │   │   ├── voice/             # VoiceCard, RecordButton, WaveformVisualizer…
+│   │   │   ├── soap/              # SOAPSectionCard, EHRPushModal, NEREntities…
+│   │   │   ├── conversation/      # ConversationPanel, ChatBubble, EntitySidebar…
+│   │   │   ├── dashboard/         # StatCard, SystemHealthGrid
+│   │   │   ├── monitoring/        # ModelStatusCard, QueueCard, AlertsList
+│   │   │   ├── settings/          # ThemeSelector, AudioSettings, ModelSettings…
+│   │   │   ├── session/           # SessionCard
+│   │   │   └── auth/              # LoginOverlay, ConsentDialog, SessionTimeout
+│   │   ├── pages/                 # 8 route-level pages (lazy-loaded)
+│   │   ├── hooks/                 # 9 custom hooks (audio, WebSocket, auth, PWA…)
+│   │   ├── stores/                # 5 Zustand stores (theme, auth, session…)
+│   │   ├── types/                 # TypeScript types (api, soap, conversation, theme)
+│   │   └── styles/
+│   │       └── globals.css        # Clinical Glass CSS variables + 6 theme variants
+│   ├── vite.config.ts             # Vite config with /api + /ws proxy to :8000
+│   └── package.json
 ├── scripts/
 │   ├── setup.ps1                  # Windows setup helper
 │   └── setup.sh                   # macOS/Linux setup helper
@@ -181,6 +209,7 @@ voice-symptom-triage-assistant/
 ### Prerequisites
 
 - Python 3.10+
+- Node.js 18+ and npm (for the React frontend)
 - FFmpeg
 - A [Hugging Face account](https://huggingface.co/settings/tokens) with access approved for:
   - [`google/medasr`](https://huggingface.co/google/medasr)
@@ -210,7 +239,7 @@ source .venv/bin/activate
 .\.venv\Scripts\Activate.ps1
 ```
 
-### 3. Install dependencies
+### 3. Install Python dependencies
 
 ```bash
 pip install --upgrade pip
@@ -243,6 +272,47 @@ MEDGEMMA_TERMS_ACKNOWLEDGED=true   # After reviewing https://ai.google.dev/gemma
 ```
 
 See [Configuration](#configuration) for the full variable reference.
+
+---
+
+## React Frontend
+
+The `frontend/` directory contains the **Clinical Glass** React 19 application — a full-featured replacement for the vanilla JS UI, built with TypeScript strict mode and compiled to static assets via Vite.
+
+### Development
+
+```bash
+cd frontend
+npm install
+npm run dev        # Starts Vite dev server on http://localhost:5173
+                   # Proxies /api and /ws to FastAPI on :8000
+```
+
+### Production build
+
+```bash
+cd frontend
+npm run build      # Outputs to frontend/dist/
+```
+
+FastAPI can serve the built assets by mounting `frontend/dist/` as a static directory. The legacy vanilla JS UI remains available at `app/static/` until the React build is mounted.
+
+### Frontend features
+
+| Feature | Details |
+|---|---|
+| **Clinical Glass design system** | Dark navy theme (`#0f111a`), glassmorphism cards, backdrop-blur, gradient glows |
+| **6 themes** | Glass (default), Light, Neon Cyber, Midnight Void, Aurora Dusk, High Contrast (WCAG AAA) |
+| **Voice recording** | `useAudioRecorder` hook with real-time waveform visualizer and duration timer |
+| **Real-time transcription** | WebSocket hook streams partial + final transcript tokens |
+| **SOAP review workflow** | Approve / Reject / Edit / History per section with full edit-history restore |
+| **Conversation panel** | Floating chat panel with entity sidebar and emergency detection |
+| **EHR push modal** | HAPI / Epic / Cerner FHIR R4 presets with auth token |
+| **Monitoring page** | Model latency, error rates, queue utilization, dismissable alerts |
+| **HIPAA page** | Compliance checklist, real-time audit trail, 7-year retention display |
+| **Settings** | Theme picker, audio config, model selection, accessibility toggles |
+| **PWA** | Install prompt, offline support, service worker |
+| **Code splitting** | All 8 pages lazy-loaded; main bundle ~96 KB gzipped |
 
 ---
 
@@ -289,25 +359,32 @@ Primary settings class: [`app/config.py`](app/config.py) — all variables can b
 
 ## Usage
 
-### Start the development server
+### Start the backend
 
 ```bash
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Open the web UI at: **http://localhost:8000**
+### Start the React frontend (development)
+
+```bash
+cd frontend && npm run dev
+```
+
+Open the React UI at: **http://localhost:5173**
+Open the legacy UI / API at: **http://localhost:8000**
 
 > First startup downloads and caches model weights — this may take several minutes depending on your connection and hardware.
 
 ### Example workflow
 
-1. Open the web UI and grant microphone access.
-2. Click **Record** to begin capturing patient voice input, or upload an audio file.
-3. Transcription streams in real time via the WebSocket endpoint.
-4. Click **Generate Documentation** to produce a structured SOAP note.
-5. Optionally upload a clinical image for AI-assisted visual findings.
-6. Review all outputs in the UI before saving the session.
-7. Export as a FHIR R4 bundle for downstream EHR integration.
+1. Open the React UI and sign in.
+2. Navigate to **Voice Assistant** and grant microphone access.
+3. Click **Record** — words stream in real time via WebSocket transcription.
+4. Stop recording — the pipeline processes through ASR → MedGemma → NER.
+5. Review each SOAP section (Approve / Edit / Reject per field).
+6. Optionally open the **Conversation** panel to ask follow-up questions.
+7. Export as JSON, PDF, or FHIR R4, or push directly to an EHR endpoint.
 
 ### Sample API call
 
@@ -400,11 +477,11 @@ Sample inputs for manual testing are in [`test_data/`](test_data/).
 
 | Commit | Change |
 |---|---|
-| `01e4dad` | Simplified authentication layer — auth dependency removed from frontend and core routes |
-| `819f637` | Consolidated FastAPI application structure; cleaned up core service wiring |
-| `173a362` | **HIPAA compliance sprint:** AES-256-GCM encryption at rest, configurable data retention with auto-purge, Prometheus metrics, structured JSON logging with correlation IDs, sliding-window rate limiter, and async inference queue |
-| `9f18948` | Patient history, session management, and SQLite/SQLAlchemy persistence |
-| `0c983ad` | Core voice triage pipeline: real-time transcription and SOAP note generation |
+| `475383e` | **Clinical Glass React frontend** — 87 components, glassmorphism design system, 6 themes, SOAP review workflow, real-time voice/WebSocket, full dashboard |
+| `c1d0c1c` | Phase 4 (Scale): K8s Helm charts, OpenTelemetry, ONNX edge runtime, vLLM serving, wake word detection, SOC 2/FDA compliance docs |
+| `064f67a` | Phase 3 (Agentic): multi-agent orchestrator, tool schemas, ambient documentation, NATS event bus, gRPC protos, cross-session memory, LoRA fine-tuning |
+| `6db479b` | Phase 2 (Intelligence): faster ASR, ML diarization, voice biometrics, specialty templates, UMLS coding, hallucination detection, confidence calibration |
+| `98e2152` | Phase 1 (Foundation): security hardening, streaming LLM, architecture decomposition |
 
 ---
 
@@ -421,6 +498,7 @@ VoxDoc is designed with healthcare data sensitivity in mind:
 - **MedGemma terms gating** — inference is blocked until `MEDGEMMA_TERMS_ACKNOWLEDGED=true` is explicitly set, ensuring organizational review of [Google's MedGemma terms](https://ai.google.dev/gemma/terms).
 - **Compliance notices** — all AI-generated responses include explicit non-diagnostic disclaimers.
 - **Field-level confidence scoring** — each extracted SOAP field carries a calibrated confidence score with a green/yellow/red verification band to guide clinician review.
+- **Clinician SOAP approval workflow** — the React UI requires explicit Approve / Reject per SOAP section with full edit history before any export or EHR push.
 
 ---
 
@@ -430,16 +508,17 @@ VoxDoc is designed with healthcare data sensitivity in mind:
 - First startup may take several minutes while model weights are downloaded and cached.
 - `google/medasr` access requires explicit Hugging Face model approval — join the waitlist if access is pending.
 - Real-time WebSocket streaming is tuned for `STREAMING_INTERVAL_SECONDS=2.0` on GPU; CPU environments may need `4.0` or higher for stable throughput.
+- The React frontend (`frontend/`) is not yet mounted in the FastAPI app as a static build — run `npm run dev` for development or configure a static mount of `frontend/dist/` for production.
 
 ---
 
 ## Roadmap
 
+- [ ] Mount React `frontend/dist/` in FastAPI static handler to replace vanilla JS UI
 - [ ] Role-based access control (RBAC) with `Admin`, `Clinician`, and `Intake Staff` roles re-enabled
 - [ ] Multi-language support beyond Whisper fallback (dedicated multilingual clinical ASR)
 - [ ] Batch session processing for high-volume intake environments
 - [ ] Native SMART on FHIR OAuth2 integration for EHR launch context
-- [ ] Ambient documentation mode (continuous passive background transcription)
 - [ ] Fine-tuned SOAP generation with specialty-specific prompt profiles (ED, primary care, behavioral health)
 - [ ] Audit log export to SIEM-compatible formats (CEF, JSON Lines)
 - [ ] Integration test suite with mock EHR endpoints
@@ -451,8 +530,8 @@ VoxDoc is designed with healthcare data sensitivity in mind:
 Contributions are welcome. To get started:
 
 1. Fork the repository and create a feature branch from `master`.
-2. Follow existing code style — FastAPI service patterns, Pydantic models, async SQLAlchemy.
-3. Add or update tests in `test_*.py` files for any new functionality.
+2. Follow existing code style — FastAPI service patterns, Pydantic models, async SQLAlchemy for the backend; React component patterns, Zustand stores, TypeScript strict mode for the frontend.
+3. Add or update tests in `test_*.py` files for any new backend functionality.
 4. Open a pull request with a clear description of the change and its motivation.
 
 Please review [`NOTICE`](NOTICE) before contributing. By submitting a PR you agree that your contributions will be licensed under the project's Apache 2.0 license.
