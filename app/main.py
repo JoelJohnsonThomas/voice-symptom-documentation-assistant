@@ -2626,11 +2626,14 @@ async def colab_info():
 @app.get("/")
 async def root():
     """Serve the main application page."""
-    from fastapi.responses import FileResponse
+    from fastapi.responses import FileResponse, Response
     # Prefer React frontend if built
     react_index = Path(__file__).parent.parent / "frontend" / "dist" / "index.html"
     if react_index.exists():
-        return FileResponse(react_index)
+        return FileResponse(
+            react_index,
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
+        )
     # Fallback to vanilla JS frontend
     index_path = Path(__file__).parent / "static" / "index.html"
     if index_path.exists():
@@ -2651,7 +2654,10 @@ if _react_index.exists():
             raise HTTPException(status_code=404)
         react_index = Path(__file__).parent.parent / "frontend" / "dist" / "index.html"
         if react_index.exists():
-            return FileResponse(react_index)
+            return FileResponse(
+                react_index,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
+            )
         raise HTTPException(status_code=404)
 
 
