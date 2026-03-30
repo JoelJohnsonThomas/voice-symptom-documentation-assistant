@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -8,11 +7,8 @@ import {
   Activity,
   Shield,
   Settings,
-  PanelLeftClose,
-  PanelLeftOpen,
   Stethoscope,
 } from "lucide-react";
-import { cn } from "../../lib/utils";
 import { SidebarNavItem } from "./SidebarNavItem";
 import { UserCard } from "./UserCard";
 
@@ -27,34 +23,22 @@ const NAV_ITEMS = [
 ] as const;
 
 export function Sidebar() {
-  const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
 
   return (
-    <aside
-      className={cn(
-        "flex h-screen flex-col border-r border-[var(--border-primary)] bg-[var(--bg-secondary)] transition-all duration-300",
-        collapsed ? "w-[68px]" : "w-64"
-      )}
-    >
-      {/* Logo */}
-      <div className="flex items-center gap-3 border-b border-[var(--border-primary)] p-4">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-[var(--accent-primary)] to-[var(--accent-secondary)] shadow-lg shadow-[var(--accent-primary)]/20">
-          <Stethoscope size={20} className="text-white" />
+    <aside className="sidebar">
+      <div className="sidebar-header">
+        <div className="logo-icon">
+          <Stethoscope size={20} color="white" />
         </div>
-        {!collapsed && (
-          <div className="min-w-0">
-            <h1 className="truncate text-sm font-bold text-[var(--text-primary)]">
-              Voice Triage
-            </h1>
-            <p className="text-xs text-[var(--text-muted)]">Clinical Assistant</p>
-          </div>
-        )}
+        <div>
+          <div className="logo-text">VoxDoc</div>
+          <div className="logo-sub">Clinical Assistant</div>
+        </div>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 space-y-1 overflow-y-auto p-3">
+      <nav className="sidebar-nav">
         {NAV_ITEMS.map((item) => (
           <SidebarNavItem
             key={item.href}
@@ -66,25 +50,12 @@ export function Sidebar() {
                 ? location.pathname === "/"
                 : location.pathname.startsWith(item.href)
             }
-            collapsed={collapsed}
             onClick={() => navigate(item.href)}
           />
         ))}
       </nav>
 
-      {/* User card */}
-      <UserCard collapsed={collapsed} />
-
-      {/* Collapse toggle */}
-      <div className="border-t border-[var(--border-primary)] p-3">
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="flex w-full items-center justify-center rounded-lg p-2 text-[var(--text-muted)] transition-colors hover:bg-white/[0.06] hover:text-[var(--text-secondary)]"
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        >
-          {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-        </button>
-      </div>
+      <UserCard />
     </aside>
   );
 }
