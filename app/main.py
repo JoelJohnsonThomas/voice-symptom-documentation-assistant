@@ -184,13 +184,6 @@ static_path = Path(__file__).parent / "static"
 if static_path.exists():
     app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 
-# Mount React frontend build assets (if built)
-react_dist = Path(__file__).parent.parent / "frontend" / "dist"
-if react_dist.exists():
-    # Serve JS/CSS/font assets from the Vite build
-    react_assets = react_dist / "assets"
-    if react_assets.exists():
-        app.mount("/assets", StaticFiles(directory=str(react_assets)), name="react-assets")
 
 
 # Pydantic models moved to app/schemas.py
@@ -2622,43 +2615,18 @@ async def colab_info():
     return get_colab_launch_info()
 
 
-# Root endpoint - serve index.html (React build preferred over vanilla JS)
+# Root endpoint - serve vanilla JS frontend
 @app.get("/")
 async def root():
     """Serve the main application page."""
-    from fastapi.responses import FileResponse, Response
-    # Prefer React frontend if built
-    react_index = Path(__file__).parent.parent / "frontend" / "dist" / "index.html"
-    if react_index.exists():
-        return FileResponse(
-            react_index,
-            headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
-        )
-    # Fallback to vanilla JS frontend
+    from fastapi.responses import FileResponse
     index_path = Path(__file__).parent / "static" / "index.html"
     if index_path.exists():
-        return FileResponse(index_path)
+        return FileResponse(
+            index_path,
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
+        )
     return {"message": "Voice Symptom Intake & Documentation Assistant API"}
-
-
-# Catch-all for React Router client-side routes (must be LAST)
-# Serves index.html for paths like /session, /history, /settings, etc.
-_react_index = Path(__file__).parent.parent / "frontend" / "dist" / "index.html"
-if _react_index.exists():
-    @app.get("/{full_path:path}")
-    async def serve_react_app(full_path: str):
-        """Serve React index.html for client-side routing."""
-        from fastapi.responses import FileResponse
-        # Don't intercept API, WebSocket, static, or metrics paths
-        if full_path.startswith(("api/", "ws/", "static/", "assets/", "metrics", "docs", "openapi", "redoc")):
-            raise HTTPException(status_code=404)
-        react_index = Path(__file__).parent.parent / "frontend" / "dist" / "index.html"
-        if react_index.exists():
-            return FileResponse(
-                react_index,
-                headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
-            )
-        raise HTTPException(status_code=404)
 
 
 if __name__ == "__main__":
