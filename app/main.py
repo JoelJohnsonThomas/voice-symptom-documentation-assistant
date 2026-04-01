@@ -2049,7 +2049,11 @@ async def delete_session(
 @app.get("/api/rag/status")
 async def rag_status(current_user=Depends(require_roles(*ALL_ROLES))):
     """Return RAG vector store statistics."""
-    return rag_service.get_index_stats()
+    try:
+        return rag_service.get_index_stats()
+    except Exception:
+        logger.exception("Failed to retrieve RAG index stats")
+        raise HTTPException(status_code=500, detail="Failed to retrieve RAG index stats")
 
 
 @app.post("/api/rag/index")
@@ -2102,15 +2106,21 @@ async def rag_reindex(
                 ),
             )
             indexed += 1
-        except Exception as exc:
-            logger.warning(f"RAG reindex: failed for session {session.id}: {exc}")
+        except Exception:
+            logger.exception("RAG reindex: failed for session %s", session.id)
             errors += 1
 
-    stats = rag_service.get_index_stats()
+    try:
+        stats = rag_service.get_index_stats()
+        total_in_store = stats.get("total_chunks", 0)
+    except Exception:
+        logger.exception("RAG reindex: failed to retrieve index stats after reindex")
+        raise HTTPException(status_code=500, detail="Reindex completed but failed to retrieve index stats")
+
     return {
         "indexed": indexed,
         "errors": errors,
-        "total_in_store": stats.get("total_chunks", 0),
+        "total_in_store": total_in_store,
     }
 
 
