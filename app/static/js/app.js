@@ -223,6 +223,9 @@ function updateAuthUI(message = null) {
 async function apiFetch(url, options = {}) {
     const headers = new Headers(options.headers || {});
 
+    // Bypass ngrok browser-warning interstitial when running via tunnel
+    headers.set('ngrok-skip-browser-warning', '1');
+
     // Inject Bearer token when auth is enabled (Phase 4)
     if (state.accessToken) {
         headers.set('Authorization', `Bearer ${state.accessToken}`);
@@ -453,7 +456,7 @@ async function refreshCurrentUser() {
 
 async function setupAuth() {
     try {
-        const resp = await fetch('/api/auth/status');
+        const resp = await fetch('/api/auth/status', { headers: { 'ngrok-skip-browser-warning': '1' } });
         if (resp.ok) {
             const data = await resp.json();
             state.authEnabled = data.auth_enabled;
@@ -3126,7 +3129,9 @@ function setupPDFExport() {
             if (!state.currentDocumentation) return;
             // Update the session in history before exporting to capture any edits
             saveSessionToHistory();
-            exportSinglePDF(state.sessionHistory[0]);
+            const sessionToExport = state.sessionHistory[0];
+            if (!sessionToExport) { alert('No session available to export.'); return; }
+            exportSinglePDF(sessionToExport);
         });
     }
 
