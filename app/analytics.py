@@ -7,12 +7,15 @@ Phase 9: Provides:
 - Alerting integration helpers (PagerDuty, Slack webhook)
 """
 
+import ipaddress
 import json
 import logging
+import socket
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -202,6 +205,25 @@ def export_audit_logs(
 # Alerting Integrations
 # =====================================================
 
+def _validate_webhook_url(url: str) -> None:
+    """Reject URLs that could enable SSRF attacks (HTTPS + public IP only)."""
+    try:
+        parsed = urlparse(url)
+    except Exception as exc:
+        raise ValueError("Invalid webhook URL") from exc
+    if parsed.scheme != "https":
+        raise ValueError("Webhook URL must use HTTPS")
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("Webhook URL must contain a valid hostname")
+    try:
+        ip = ipaddress.ip_address(socket.getaddrinfo(hostname, None)[0][4][0])
+    except (socket.gaierror, ValueError) as exc:
+        raise ValueError(f"Cannot resolve webhook hostname '{hostname}'") from exc
+    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+        raise ValueError("Webhook URL must point to a public IP address")
+
+
 async def send_slack_alert(
     webhook_url: str,
     title: str,
@@ -209,6 +231,12 @@ async def send_slack_alert(
     severity: str = "warning",
 ) -> bool:
     """Send an alert to a Slack webhook."""
+    try:
+        _validate_webhook_url(webhook_url)
+    except ValueError as exc:
+        logger.warning("Slack webhook URL rejected: %s", exc)
+        return False
+
     color_map = {"info": "#36a64f", "warning": "#ff9900", "critical": "#ff0000"}
     payload = {
         "attachments": [

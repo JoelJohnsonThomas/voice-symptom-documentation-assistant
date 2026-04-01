@@ -8,12 +8,54 @@ Supports export as a FHIR Bundle (transaction) and direct push to EHR systems
 (Epic, Cerner, HAPI FHIR) via their FHIR REST API.
 """
 
+import ipaddress
 import logging
+import socket
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_webhook_url(url: str) -> None:
+    """Reject URLs that could enable SSRF attacks.
+
+    Enforces HTTPS and blocks requests to private, loopback, link-local,
+    reserved, and multicast IP ranges.
+
+    Raises:
+        ValueError: if the URL fails any safety check.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception as exc:
+        raise ValueError("Invalid webhook URL") from exc
+
+    if parsed.scheme != "https":
+        raise ValueError("Webhook URL must use HTTPS")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("Webhook URL must contain a valid hostname")
+
+    # Resolve once and check the resulting IP — blocks localhost / RFC-1918 / etc.
+    try:
+        addr_infos = socket.getaddrinfo(hostname, None)
+        ip = ipaddress.ip_address(addr_infos[0][4][0])
+    except (socket.gaierror, ValueError) as exc:
+        raise ValueError(f"Cannot resolve webhook hostname '{hostname}'") from exc
+
+    if (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    ):
+        raise ValueError("Webhook URL must point to a public IP address")
 
 
 class FHIRExportService:
@@ -565,6 +607,12 @@ class FHIRExportService:
             "timestamp": self._now_iso(),
             "data": payload,
         }
+
+        try:
+            _validate_webhook_url(webhook_url)
+        except ValueError as exc:
+            logger.warning("Webhook URL rejected: %s", exc)
+            return {"success": False, "error": str(exc)}
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
