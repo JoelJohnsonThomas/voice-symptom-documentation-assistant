@@ -18,12 +18,30 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
+# Allowed webhook destinations.
+# In production, populate these with the exact hosts / domains / IPs that are permitted
+# to receive webhook callbacks from this service.
+ALLOWED_WEBHOOK_HOSTS: List[str] = []
+ALLOWED_WEBHOOK_SUFFIXES: List[str] = []
+ALLOWED_WEBHOOK_IPS: List[ipaddress.IPv4Address] = []
+
+
+def _hostname_is_allowed(hostname: str) -> bool:
+    """Return True if the hostname matches an allowed host or suffix."""
+    if hostname in ALLOWED_WEBHOOK_HOSTS:
+        return True
+    for suffix in ALLOWED_WEBHOOK_SUFFIXES:
+        if suffix and hostname.endswith(suffix) and hostname != suffix.lstrip("."):
+            return True
+    return False
+
 
 def _validate_webhook_url(url: str) -> None:
     """Reject URLs that could enable SSRF attacks.
 
     Enforces HTTPS and blocks requests to private, loopback, link-local,
-    reserved, and multicast IP ranges.
+    reserved, and multicast IP ranges, and restricts destinations to an
+    allowlist of hosts/IPs controlled by the server.
 
     Raises:
         ValueError: if the URL fails any safety check.
@@ -40,12 +58,26 @@ def _validate_webhook_url(url: str) -> None:
     if not hostname:
         raise ValueError("Webhook URL must contain a valid hostname")
 
-    # Resolve once and check the resulting IP — blocks localhost / RFC-1918 / etc.
+    # If hostname is an IP literal, only allow explicitly permitted public IPs.
+    ip_literal: Optional[ipaddress._BaseAddress]
     try:
-        addr_infos = socket.getaddrinfo(hostname, None)
-        ip = ipaddress.ip_address(addr_infos[0][4][0])
-    except (socket.gaierror, ValueError) as exc:
-        raise ValueError(f"Cannot resolve webhook hostname '{hostname}'") from exc
+        ip_literal = ipaddress.ip_address(hostname)
+    except ValueError:
+        ip_literal = None
+
+    if ip_literal is not None:
+        if ip_literal not in ALLOWED_WEBHOOK_IPS:
+            raise ValueError("Webhook URL IP address is not in the allowlist")
+        ip = ip_literal
+    else:
+        if not _hostname_is_allowed(hostname):
+            raise ValueError("Webhook URL host is not permitted")
+        # Resolve once and check the resulting IP — blocks localhost / RFC-1918 / etc.
+        try:
+            addr_infos = socket.getaddrinfo(hostname, None)
+            ip = ipaddress.ip_address(addr_infos[0][4][0])
+        except (socket.gaierror, ValueError) as exc:
+            raise ValueError(f"Cannot resolve webhook hostname '{hostname}'") from exc
 
     if (
         ip.is_private
