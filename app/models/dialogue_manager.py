@@ -107,16 +107,20 @@ class DialogueManager:
         # Record user turn
         self.session.add_turn("user", user_text)
 
-        # Emergency check (all states)
+        # Emergency check (all modes/states)
         is_emergency, matched = check_emergency(user_text)
         if is_emergency:
             return await self._handle_emergency(matched)
 
-        # Check for end-of-conversation signals
+        # Clinician mode: bypass the patient state machine entirely
+        if self.session.mode == ConversationMode.CLINICIAN:
+            return await self._handle_clinician_query(user_text)
+
+        # Check for end-of-conversation signals (patient mode)
         if self._is_end_signal(user_text):
             return await self._handle_summary()
 
-        # Route by state
+        # Route by state (patient mode)
         state = self.session.state
         if state == ConversationState.CHIEF_COMPLAINT:
             return await self._handle_chief_complaint(user_text)
@@ -133,9 +137,6 @@ class DialogueManager:
                 is_final=True,
             )
         else:
-            # Clinician mode or fallback
-            if self.session.mode == ConversationMode.CLINICIAN:
-                return await self._handle_clinician_query(user_text)
             return AssistantResponse(
                 text="I'm not sure how to help with that. Could you rephrase?",
                 state=self.session.state,
@@ -359,10 +360,21 @@ class DialogueManager:
             "drug interaction", "interaction between", "interact with",
             "contraindic", "drug-drug", "medication interaction",
             "safe to combine", "combine with", "taken together",
+            # natural clinician phrasings
+            "interactions for", "interactions with", "interactions of",
+            "any interaction", "check interaction", "drug interactions",
+            "safe to give", "safe with", "can i give", "can i take",
+            "mix with", "mixed with", "together with",
+            "co-administer", "coadminister", "adverse reaction",
+            "side effect", "drug effect",
         ]
         icd_keywords = [
             "icd-10", "icd10", "icd code", "diagnosis code",
             "billing code", "code for", "classification code",
+            # natural clinician phrasings
+            " icd ", "icd?", "icd-", "what code", "which code",
+            "diagnostic code", "disease code", "medical code",
+            "coding for", "coded as", "code this",
         ]
         case_keywords = [
             "similar case", "similar patient", "past case",
@@ -546,16 +558,23 @@ class DialogueManager:
         """Query drug interaction service for clinician mode."""
         try:
             from app.models import drug_interaction_service
-            # Extract medication names from query
+            entities = await self._run_ner(query)
             medications = [
-                e.get("text", "")
-                for e in (await self._run_ner(query)).get("medications", [])
+                e.get("text") or e.get("name", "")
+                for e in entities.get("medications", [])
+                if e.get("text") or e.get("name")
             ]
             if len(medications) >= 2:
                 result = drug_interaction_service.check_interactions(medications)
                 if result:
                     return f"Drug interaction check results: {json.dumps(result, indent=2)}"
-            return "I need at least two medication names to check interactions. Could you specify them?"
+                return f"No known interactions found between: {', '.join(medications)}."
+            return (
+                f"I detected {'one medication' if len(medications) == 1 else 'no medications'} "
+                f"({'\"' + medications[0] + '\"' if medications else 'none'}) in your query. "
+                "I need at least two medication names to check interactions. "
+                "Please name both medications explicitly."
+            )
         except Exception as e:
             logger.error(f"Drug interaction query failed: {e}")
             return "I wasn't able to check drug interactions at this time. Please try again."
@@ -564,10 +583,11 @@ class DialogueManager:
         """Query ICD-10 lookup for clinician mode."""
         try:
             from app.models import icd10_service
-            # Extract condition from query
+            entities = await self._run_ner(query)
             conditions = [
-                e.get("text", "")
-                for e in (await self._run_ner(query)).get("conditions", [])
+                e.get("text") or e.get("name", "")
+                for e in entities.get("conditions", [])
+                if e.get("text") or e.get("name")
             ]
             if conditions:
                 results = []
@@ -581,6 +601,7 @@ class DialogueManager:
                         results.append(f"{condition}: {formatted}")
                 if results:
                     return "ICD-10 suggestions:\n" + "\n".join(results)
+                return f"No ICD-10 codes found for: {', '.join(conditions)}."
             return "Could you specify the condition you'd like ICD-10 codes for?"
         except Exception as e:
             logger.error(f"ICD-10 query failed: {e}")
