@@ -2874,7 +2874,7 @@ function renderSOAPHistory(section) {
             <div class="soap-history-original-label">Original AI Output</div>
             <button class="soap-history-restore-btn" onclick="restoreOriginalSOAP('${section}')">Restore</button>
         </div>
-               ${isSymptomDetails ? data.originalText : escapeHTML(data.originalText)}
+               ${escapeHTML(data.originalText)}
            </div>`
         : '';
 
@@ -2889,7 +2889,9 @@ function renderSOAPHistory(section) {
             const actionLabel = e.action.charAt(0).toUpperCase() + e.action.slice(1);
             let detail = '';
             if (e.text) {
-                const plainText = e.text.replace(/<[^>]*>?/gm, ''); // Strip HTML for list items in history
+                // Use DOMParser to extract text safely — avoids incomplete regex stripping
+                const parsed = new DOMParser().parseFromString(e.text, 'text/html');
+                const plainText = parsed.body.textContent || '';
                 detail = ` — ${ escapeHTML(truncate(plainText, 120)) } `;
             }
             return `<li class="soap-history-entry">
