@@ -2121,27 +2121,35 @@ async def rag_reindex(
 @app.get("/api/knowledge-base/status")
 async def knowledge_base_status():
     """Return knowledge base statistics."""
-    return {
-        "guidelines": knowledge_base_service.get_knowledge_base_stats(),
-        "icd10": icd10_service.get_icd10_stats(),
-        "drug_interactions": drug_interaction_service.get_interaction_db_stats(),
-    }
+    try:
+        return {
+            "guidelines": knowledge_base_service.get_knowledge_base_stats(),
+            "icd10": icd10_service.get_icd10_stats(),
+            "drug_interactions": drug_interaction_service.get_interaction_db_stats(),
+        }
+    except Exception:
+        logger.exception("Failed to retrieve knowledge base status")
+        raise HTTPException(status_code=500, detail="Failed to retrieve knowledge base status")
 
 
 @app.post("/api/knowledge-base/initialize")
 async def initialize_knowledge_base(force_reseed: bool = False):
     """Initialize or re-seed the clinical knowledge base and ICD-10 index."""
-    loop = asyncio.get_event_loop()
-    kb_result = await loop.run_in_executor(
-        None, lambda: knowledge_base_service.initialize_knowledge_base(force_reseed=force_reseed)
-    )
-    icd10_result = await loop.run_in_executor(
-        None, lambda: icd10_service.initialize_icd10_index(force_reseed=force_reseed)
-    )
-    return {
-        "guidelines": kb_result,
-        "icd10": icd10_result,
-    }
+    try:
+        loop = asyncio.get_event_loop()
+        kb_result = await loop.run_in_executor(
+            None, lambda: knowledge_base_service.initialize_knowledge_base(force_reseed=force_reseed)
+        )
+        icd10_result = await loop.run_in_executor(
+            None, lambda: icd10_service.initialize_icd10_index(force_reseed=force_reseed)
+        )
+        return {
+            "guidelines": kb_result,
+            "icd10": icd10_result,
+        }
+    except Exception:
+        logger.exception("Knowledge base initialization failed")
+        raise HTTPException(status_code=500, detail="Knowledge base initialization failed")
 
 
 @app.post("/api/knowledge-base/guidelines")
@@ -2172,7 +2180,11 @@ async def add_custom_guideline(
 @app.delete("/api/knowledge-base/guidelines/{guideline_id}")
 async def delete_guideline(guideline_id: str):
     """Remove a guideline from the knowledge base."""
-    return knowledge_base_service.remove_guideline(guideline_id)
+    try:
+        return knowledge_base_service.remove_guideline(guideline_id)
+    except Exception:
+        logger.exception("Failed to delete guideline %s", guideline_id)
+        raise HTTPException(status_code=500, detail="Failed to delete guideline")
 
 
 @app.post("/api/icd10/lookup")
@@ -2188,14 +2200,18 @@ async def icd10_lookup(symptom: str, top_k: int = 5):
 @app.post("/api/drug-interactions/check")
 async def check_drug_interactions(medications: List[str], min_severity: str = "moderate"):
     """Check for drug-drug interactions among a list of medications."""
-    results = drug_interaction_service.check_interactions(
-        medications, min_severity=min_severity
-    )
-    return {
-        "medications": medications,
-        "interactions": results,
-        "interaction_count": len(results),
-    }
+    try:
+        results = drug_interaction_service.check_interactions(
+            medications, min_severity=min_severity
+        )
+        return {
+            "medications": medications,
+            "interactions": results,
+            "interaction_count": len(results),
+        }
+    except Exception:
+        logger.exception("Drug interaction check failed")
+        raise HTTPException(status_code=500, detail="Drug interaction check failed")
 
 
 # =====================================================
