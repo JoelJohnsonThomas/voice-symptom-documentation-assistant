@@ -2173,19 +2173,23 @@ async def add_custom_guideline(
     conditions: List[str],
 ):
     """Add a custom clinical guideline to the knowledge base."""
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None,
-        lambda: knowledge_base_service.add_guideline(
-            guideline_id=guideline_id,
-            title=title,
-            content=content,
-            source=source,
-            category=category,
-            conditions=conditions,
-        ),
-    )
-    return result
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: knowledge_base_service.add_guideline(
+                guideline_id=guideline_id,
+                title=title,
+                content=content,
+                source=source,
+                category=category,
+                conditions=conditions,
+            ),
+        )
+        return result
+    except Exception:
+        logger.exception("Failed to add guideline %s", guideline_id)
+        raise HTTPException(status_code=500, detail="Failed to add guideline")
 
 
 @app.delete("/api/knowledge-base/guidelines/{guideline_id}")
@@ -2201,11 +2205,15 @@ async def delete_guideline(guideline_id: str):
 @app.post("/api/icd10/lookup")
 async def icd10_lookup(symptom: str, top_k: int = 5):
     """Semantic ICD-10 code lookup for a symptom description."""
-    loop = asyncio.get_event_loop()
-    results = await loop.run_in_executor(
-        None, lambda: icd10_service.lookup_icd10_codes(symptom, top_k=top_k)
-    )
-    return {"symptom": symptom, "matches": results}
+    try:
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(
+            None, lambda: icd10_service.lookup_icd10_codes(symptom, top_k=top_k)
+        )
+        return {"symptom": symptom, "matches": results}
+    except Exception:
+        logger.exception("ICD-10 lookup failed for symptom %r", symptom)
+        raise HTTPException(status_code=500, detail="ICD-10 lookup failed")
 
 
 @app.post("/api/drug-interactions/check")

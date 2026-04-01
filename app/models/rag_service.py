@@ -379,7 +379,19 @@ def get_rag_audit_logs(
             return []
 
         date_str = date or datetime.utcnow().strftime("%Y-%m-%d")
+
+        # Validate format to prevent path traversal (e.g. ../../etc/passwd)
+        import re as _re
+        if not _re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
+            logger.warning("Invalid audit log date format rejected: %r", date_str)
+            return []
+
         audit_file = audit_dir / f"rag_audit_{date_str}.jsonl"
+
+        # Confirm the resolved path stays inside the audit directory
+        if not str(audit_file.resolve()).startswith(str(audit_dir.resolve())):
+            logger.warning("Path traversal attempt in audit log date rejected")
+            return []
 
         if not audit_file.exists():
             return []
