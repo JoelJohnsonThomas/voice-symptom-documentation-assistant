@@ -1807,7 +1807,8 @@ async def send_webhook(request: WebhookRequest):
         auth_token=request.auth_token,
     )
     if not result.get("success"):
-        raise HTTPException(status_code=502, detail=result.get("error", "Webhook delivery failed"))
+        logger.warning("Webhook delivery failed: %s", result.get("error", "unknown error"))
+        raise HTTPException(status_code=502, detail="Webhook delivery failed")
     return result
 
 
