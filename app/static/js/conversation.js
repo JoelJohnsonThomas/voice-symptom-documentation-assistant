@@ -444,27 +444,37 @@ class ConversationManager {
         card.className = 'chat-bubble assistant';
         card.style.maxWidth = '95%';
 
-        let html = '<strong>Documentation Summary</strong><br>';
-        if (documentation.chief_complaint) {
-            html += `<br><em>Chief Complaint:</em> ${documentation.chief_complaint}`;
-        }
-        if (documentation.subjective) {
-            html += `<br><em>Subjective:</em> ${documentation.subjective}`;
-        }
-        if (documentation.objective) {
-            html += `<br><em>Objective:</em> ${documentation.objective}`;
-        }
-        if (documentation.assessment) {
-            html += `<br><em>Assessment:</em> ${documentation.assessment}`;
-        }
-        if (documentation.plan) {
-            html += `<br><em>Plan:</em> ${documentation.plan}`;
-        }
-        if (documentation.red_flags && documentation.red_flags.length > 0) {
-            html += `<br><br><span style="color: #ff4757;">RED FLAGS: ${documentation.red_flags.join(', ')}</span>`;
+        // Build content using DOM API — no innerHTML with server data
+        const title = document.createElement('strong');
+        title.textContent = 'Documentation Summary';
+        card.appendChild(title);
+
+        const fields = [
+            ['Chief Complaint', documentation.chief_complaint],
+            ['Subjective',      documentation.subjective],
+            ['Objective',       documentation.objective],
+            ['Assessment',      documentation.assessment],
+            ['Plan',            documentation.plan],
+        ];
+
+        for (const [label, value] of fields) {
+            if (!value) continue;
+            card.appendChild(document.createElement('br'));
+            const em = document.createElement('em');
+            em.textContent = label + ':';
+            card.appendChild(em);
+            card.appendChild(document.createTextNode(' ' + value));
         }
 
-        card.innerHTML = html;
+        if (documentation.red_flags && documentation.red_flags.length > 0) {
+            card.appendChild(document.createElement('br'));
+            card.appendChild(document.createElement('br'));
+            const flagSpan = document.createElement('span');
+            flagSpan.style.color = '#ff4757';
+            flagSpan.textContent = 'RED FLAGS: ' + documentation.red_flags.join(', ');
+            card.appendChild(flagSpan);
+        }
+
         this.chatMessages.appendChild(card);
         this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
     }

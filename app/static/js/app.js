@@ -406,12 +406,14 @@ function renderMonitoringData(data) {
     if (alertsBanner) {
         if (data.alerts && data.alerts.length > 0) {
             alertsBanner.classList.remove('hidden');
-            alertsBanner.innerHTML = data.alerts.map(a => `
-                <div class="alert-item ${a.severity}">
-                    <span class="alert-severity">${a.severity}</span>
-                    <span>${a.description}</span>
-                </div>
-            `).join('');
+            alertsBanner.innerHTML = data.alerts.map(a => {
+                const sev = escapeHTML(String(a.severity || ''));
+                const desc = escapeHTML(String(a.description || ''));
+                return `<div class="alert-item ${sev}">
+                    <span class="alert-severity">${sev}</span>
+                    <span>${desc}</span>
+                </div>`;
+            }).join('');
         } else {
             alertsBanner.classList.add('hidden');
             alertsBanner.innerHTML = '';
@@ -2315,12 +2317,15 @@ function displayNEREntities(entities) {
     // Render Conditions
     if (elements.nerConditionBadges) {
         if (entities.conditions && entities.conditions.length > 0) {
-            elements.nerConditionBadges.innerHTML = entities.conditions.map(ent =>
-                `<span class="entity-badge entity-condition" title="${ent.system}: ${ent.code}">
-                    <span class="entity-name">${escapeHTML(ent.text)}</span>
-                    <span class="entity-code">${ent.system}: ${ent.code}</span>
-                </span>`
-            ).join('');
+            elements.nerConditionBadges.innerHTML = entities.conditions.map(ent => {
+                const text   = escapeHTML(String(ent.text   || ''));
+                const system = escapeHTML(String(ent.system || ''));
+                const code   = escapeHTML(String(ent.code   || ''));
+                return `<span class="entity-badge entity-condition" title="${system}: ${code}">
+                    <span class="entity-name">${text}</span>
+                    <span class="entity-code">${system}: ${code}</span>
+                </span>`;
+            }).join('');
             document.getElementById('nerConditions')?.classList.remove('hidden');
         } else {
             elements.nerConditionBadges.innerHTML = '<span class="ner-empty-state">None detected</span>';
@@ -2330,12 +2335,15 @@ function displayNEREntities(entities) {
     // Render Medications
     if (elements.nerMedicationBadges) {
         if (entities.medications && entities.medications.length > 0) {
-            elements.nerMedicationBadges.innerHTML = entities.medications.map(ent =>
-                `<span class="entity-badge entity-medication" title="${ent.system}: ${ent.code}">
-                    <span class="entity-name">${escapeHTML(ent.text)}</span>
-                    <span class="entity-code">${ent.system}: ${ent.code}</span>
-                </span>`
-            ).join('');
+            elements.nerMedicationBadges.innerHTML = entities.medications.map(ent => {
+                const text   = escapeHTML(String(ent.text   || ''));
+                const system = escapeHTML(String(ent.system || ''));
+                const code   = escapeHTML(String(ent.code   || ''));
+                return `<span class="entity-badge entity-medication" title="${system}: ${code}">
+                    <span class="entity-name">${text}</span>
+                    <span class="entity-code">${system}: ${code}</span>
+                </span>`;
+            }).join('');
             document.getElementById('nerMedications')?.classList.remove('hidden');
         } else {
             elements.nerMedicationBadges.innerHTML = '<span class="ner-empty-state">None detected</span>';
@@ -2914,11 +2922,7 @@ function restoreOriginalSOAP(section) {
     if (!bodyEl) return;
 
     // Restore text
-    if (section === 'clinical_details') {
-        bodyEl.innerHTML = data.originalText;
-    } else {
-        bodyEl.textContent = data.originalText;
-    }
+    bodyEl.textContent = data.originalText;
 
     // Reset state
     data.status = 'pending';
@@ -3149,7 +3153,7 @@ function populatePDFTemplate(session) {
     document.getElementById('pdfTime').textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
     document.getElementById('pdfChiefComplaint').textContent = session.chiefComplaint;
-    document.getElementById('pdfClinicalDetails').innerHTML = session.clinicalDetails;
+    document.getElementById('pdfClinicalDetails').textContent = session.clinicalDetails;
 
     if (session.visualFindings) {
         document.getElementById('pdfVisualFindingsContainer').style.display = 'block';
@@ -3320,12 +3324,17 @@ function renderExportLogs(logs) {
     for (const log of logs) {
         const ts = log.timestamp ? new Date(log.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '--';
         const dest = log.destination ? (log.destination.length > 15 ? log.destination.substring(0, 15) + '...' : log.destination) : '--';
+        const logUser   = escapeHTML(String(log.username    || 'system'));
+        const logType   = escapeHTML(String(log.export_type || '--'));
+        const logDest   = escapeHTML(String(log.destination || ''));
+        const logDestTr = escapeHTML(dest);
+        const logStatus = escapeHTML(String(log.status      || 'success'));
         html += `<div class="hipaa-export-row">
-            <span>${log.username || 'system'}</span>
-            <span>${log.export_type || '--'}</span>
-            <span title="${log.destination || ''}">${dest}</span>
+            <span>${logUser}</span>
+            <span>${logType}</span>
+            <span title="${logDest}">${logDestTr}</span>
             <span>${ts}</span>
-            <span class="hipaa-export-status ${log.status || 'success'}">${log.status || 'success'}</span>
+            <span class="hipaa-export-status ${logStatus}">${logStatus}</span>
         </div>`;
     }
 
