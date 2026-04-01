@@ -1,6 +1,6 @@
 <div align="center">
 
-# VoxDoc: Voice Symptom Triage Assistant
+# VoxDoc: Voice Symptom Documentation Assistant
 
 **AI-powered voice intake and clinical documentation for modern healthcare workflows**
 
@@ -17,7 +17,7 @@
 
 > [!IMPORTANT]
 > VoxDoc is for **administrative documentation support only**.
-> It does **not** provide diagnosis, triage decisions, medical advice, or treatment plans.
+> It does **not** provide diagnosis,  decisions, medical advice, or treatment plans.
 > All generated content requires clinician review before use.
 
 ---
@@ -137,7 +137,7 @@ flowchart LR
 ## Project Structure
 
 ```text
-voice-symptom-triage-assistant/
+voice-symptom-documentation-assistant/
 ├── app/
 │   ├── main.py                    # FastAPI routes and app wiring
 │   ├── config.py                  # Pydantic settings (all env vars)
@@ -219,8 +219,8 @@ voice-symptom-triage-assistant/
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/JoelJohnsonThomas/voice-symptom-triage-assistant.git
-cd voice-symptom-triage-assistant
+git clone https://github.com/JoelJohnsonThomas/voice-symptom-documentation-assistant.git
+cd voice-symptom-documentation-assistant
 ```
 
 ### 2. Create a virtual environment
