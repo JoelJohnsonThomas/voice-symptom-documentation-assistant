@@ -333,11 +333,11 @@ async def health_check():
             "gpu_enabled": settings.enable_gpu,
             "compliance_metadata": build_compliance_metadata(),
         }
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
+    except Exception:
+        logger.exception("Health check failed")
         return JSONResponse(
             status_code=503,
-            content={"status": "unhealthy", "error": str(e)}
+            content={"status": "unhealthy", "error": "Service health check failed"}
         )
 
 
