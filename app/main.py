@@ -150,8 +150,19 @@ if settings.oidc_enabled:
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+    embed_origins = settings.allow_iframe_embedding_origins.strip()
+    if embed_origins:
+        # CSP frame-ancestors supersedes X-Frame-Options in modern browsers
+        # and supports specific origins (X-Frame-Options does not).
+        response.headers["Content-Security-Policy"] = (
+            f"frame-ancestors 'self' {embed_origins}"
+        )
+    else:
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+
     if settings.auth_enabled:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response

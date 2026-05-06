@@ -31,29 +31,38 @@ class MedASRService:
         self._load_model()
     
     def _load_model(self):
-        """Load MedASR model from Hugging Face."""
+        """Load MedASR model from Hugging Face.
+
+        MedASR (`google/medasr`) is gated and may not be downloadable in
+        environments without accepted terms (e.g. free demo deployments).
+        We treat its load as best-effort: if it fails, fall back to Whisper
+        only and keep the service usable.
+        """
+        logger.info(f"Loading MedASR model on device: {self.device}")
         try:
-            logger.info(f"Loading MedASR model on device: {self.device}")
-            
-            # Use pipeline for easier inference
             self.pipe = pipeline(
                 "automatic-speech-recognition",
                 model=settings.medasr_model,
                 device=0 if self.device == "cuda" else -1,
                 token=settings.hf_token if settings.hf_token else None
             )
-            
             logger.info("MedASR model loaded successfully")
-            
-            if getattr(settings, "multilingual_asr_enabled", False):
+        except Exception as e:
+            self.pipe = None
+            logger.warning(
+                "MedASR model unavailable (%s); falling back to Whisper-only ASR.", e
+            )
+
+        try:
+            if getattr(settings, "multilingual_asr_enabled", False) or self.pipe is None:
                 logger.info(f"Loading Whisper model: {settings.whisper_model}")
                 whisper_name = settings.whisper_model.split("/")[-1].replace("whisper-", "")
                 self.whisper_model = whisper.load_model(whisper_name, device=self.device)
                 logger.info("Whisper model loaded successfully")
-            
         except Exception as e:
-            logger.error(f"Failed to load MedASR model: {e}")
-            raise
+            logger.error("Failed to load Whisper fallback: %s", e)
+            if self.pipe is None:
+                raise
     
     def transcribe(
         self, 
@@ -111,22 +120,27 @@ class MedASRService:
                 detected_language = max(probs, key=probs.get)
                 logger.info(f"Detected language: {detected_language}")
             
-            if detected_language != "en" and self.whisper_model is not None:
+            use_whisper = (
+                self.pipe is None
+                or (detected_language != "en" and self.whisper_model is not None)
+            )
+            if use_whisper and self.whisper_model is not None:
                 logger.info(f"Transcribing {detected_language} audio ({duration:.1f}s) with Whisper...")
+                audio_float32 = audio_array.astype(np.float32)
                 result = self.whisper_model.transcribe(audio_float32, language=detected_language)
                 transcript = result["text"]
             else:
                 logger.info(f"Transcribing English audio ({duration:.1f}s) with MedASR...")
-                
+
                 # Transcribe using pipeline with chunking for long audio
                 result = self.pipe(
                     audio_array,
                     chunk_length_s=20,  # Process in 20-second chunks
                     stride_length_s=2   # 2-second overlap between chunks
                 )
-                
+
                 transcript = result["text"]
-                
+
                 # Clean up special tokens and artifacts
                 import re
                 transcript = re.sub(r'</?s>|<unk>|<pad>', '', transcript)  # Remove special tokens
@@ -142,8 +156,8 @@ class MedASRService:
             raise
     
     def is_ready(self) -> bool:
-        """Check if the model is loaded and ready."""
-        return self.pipe is not None
+        """Check if any ASR backend is available (MedASR pipeline or Whisper fallback)."""
+        return self.pipe is not None or self.whisper_model is not None
 
 
 # Global instance (singleton pattern)

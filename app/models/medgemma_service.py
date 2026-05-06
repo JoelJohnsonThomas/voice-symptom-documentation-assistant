@@ -844,7 +844,41 @@ class MedGemmaService:
         # Skip re-validation that would fail on synonym mappings (e.g., "chest discomfort" -> "chest pain")
         
         return True, ""
-    
+
+    def _build_validation_failed_fallback(self, transcript: str, error_msg: str) -> Dict[str, Any]:
+        """Safe fallback document returned when generation output fails validation."""
+        return {
+            "chief_complaint": "not specified",
+            "symptom_details": {"symptoms_mentioned": ["not specified"]},
+            "soap_note_subjective": f"Patient statement: {transcript}",
+            "soap_note_objective": "Pending clinician assessment.",
+            "soap_note_assessment": "Pending clinician assessment.",
+            "soap_note_plan": "Pending clinician assessment.",
+            "field_confidence": {
+                "chief_complaint": self._build_confidence_record(0.25, "Validation failed fallback."),
+                "symptom_details": {
+                    "symptoms_mentioned": self._build_confidence_record(0.25, "Validation failed fallback."),
+                },
+                "soap_note_subjective": self._build_confidence_record(0.30, "Validation failed fallback."),
+            },
+            "confidence_summary": {
+                "overall_score": 0.27,
+                "color_breakdown": {"green": 0, "yellow": 0, "red": 3},
+                "high_confidence_fields": [],
+                "needs_verification_fields": [
+                    "chief_complaint",
+                    "symptom_details.symptoms_mentioned",
+                    "soap_note_subjective",
+                ],
+                "calibration": "rule_based_v1",
+            },
+            "validation_failed": True,
+            "validation_error": error_msg,
+            "requires_clinician_review": True,
+            "compliance_notice": build_compliance_notice(),
+            "compliance_metadata": build_compliance_metadata(),
+        }
+
     def generate_followup_questions(self, transcript: str, detected_language: str = "en") -> List[str]:
         """
         Generate 2-3 targeted follow-up questions for missing clinical information.
@@ -1143,39 +1177,7 @@ class MedGemmaService:
             is_valid, error_msg = self._validate_output(documentation, transcript)
             if not is_valid:
                 logger.warning(f"Documentation validation failed: {error_msg}")
-                # Return safe fallback - just the transcript
-                fallback = {
-                    "chief_complaint": "not specified",
-                    "symptom_details": {"symptoms_mentioned": ["not specified"]},
-                    "soap_note_subjective": f"Patient statement: {transcript}",
-                    "soap_note_objective": "Pending clinician assessment.",
-                    "soap_note_assessment": "Pending clinician assessment.",
-                    "soap_note_plan": "Pending clinician assessment.",
-                    "field_confidence": {
-                        "chief_complaint": self._build_confidence_record(0.25, "Validation failed fallback."),
-                        "symptom_details": {
-                            "symptoms_mentioned": self._build_confidence_record(0.25, "Validation failed fallback."),
-                        },
-                        "soap_note_subjective": self._build_confidence_record(0.30, "Validation failed fallback."),
-                    },
-                    "confidence_summary": {
-                        "overall_score": 0.27,
-                        "color_breakdown": {"green": 0, "yellow": 0, "red": 3},
-                        "high_confidence_fields": [],
-                        "needs_verification_fields": [
-                            "chief_complaint",
-                            "symptom_details.symptoms_mentioned",
-                            "soap_note_subjective",
-                        ],
-                        "calibration": "rule_based_v1",
-                    },
-                    "validation_failed": True,
-                    "validation_error": error_msg,
-                    "requires_clinician_review": True,
-                    "compliance_notice": build_compliance_notice(),
-                    "compliance_metadata": build_compliance_metadata(),
-                }
-                return fallback
+                return self._build_validation_failed_fallback(transcript, error_msg)
             
             # Generate O, A, P sections using MedGemma
             try:
@@ -1540,8 +1542,17 @@ _medgemma_service = None
 
 
 def get_medgemma_service() -> MedGemmaService:
-    """Get or create MedGemma service instance."""
+    """Get or create MedGemma service instance.
+
+    Dispatches based on settings.medgemma_provider:
+      - "local"        : in-process transformers model (default)
+      - "hf-inference" : HF Inference Providers (no local model load)
+    """
     global _medgemma_service
     if _medgemma_service is None:
-        _medgemma_service = MedGemmaService()
+        if settings.medgemma_provider == "hf-inference":
+            from app.models.medgemma_remote_service import HFInferenceMedGemmaService
+            _medgemma_service = HFInferenceMedGemmaService()
+        else:
+            _medgemma_service = MedGemmaService()
     return _medgemma_service

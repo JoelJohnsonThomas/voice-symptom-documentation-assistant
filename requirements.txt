@@ -12,7 +12,7 @@ torchaudio==2.2.1
 # Hugging Face
 transformers==4.36.2
 accelerate==0.26.1
-huggingface_hub==0.20.3
+huggingface_hub>=0.24.0  # >=0.24 needed for InferenceClient.chat_completion / streaming
 
 # Audio
 librosa==0.10.1

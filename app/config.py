@@ -18,7 +18,15 @@ class Settings(BaseSettings):
 
     # Hugging Face
     hf_token: str = ""
-    
+
+    # MedGemma backend: "local" loads transformers in-process (needs GPU/RAM);
+    # "hf-inference" routes generation to Hugging Face Inference Providers
+    # using HF_TOKEN. Use "hf-inference" for free CPU deployments where
+    # the 4b model would not fit or be too slow.
+    medgemma_provider: Literal["local", "hf-inference"] = "local"
+    hf_inference_provider: str = ""   # "" = auto; or e.g. "fireworks-ai", "together"
+    hf_inference_timeout: int = 120   # Seconds before HF Inference call aborts
+
     # Models
     model_cache_dir: str = "/app/models"
     medasr_model: str = "google/medasr"
@@ -194,6 +202,10 @@ class Settings(BaseSettings):
     session_inactivity_timeout_minutes: int = 15  # Frontend inactivity timer
     consent_tracking_enabled: bool = True         # Require verbal consent before intake
     cors_allowed_origins: str = "*"               # Comma-separated origins; "*" for dev
+    # Iframe parents allowed to embed the app (CSP frame-ancestors).
+    # Default empty = X-Frame-Options: DENY. For HF Spaces canonical URL,
+    # set to "https://huggingface.co".
+    allow_iframe_embedding_origins: str = ""
 
     # OAuth2/OIDC SSO (Phase 1)
     oidc_enabled: bool = False                     # Enable OIDC login flow
