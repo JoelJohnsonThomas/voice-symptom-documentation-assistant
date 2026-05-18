@@ -45,7 +45,7 @@ export default function SessionViewPage() {
             </GlassCard>
 
             {/* SOAP results */}
-            <ResultsContainer />
+            <ResultsContainer sessionId={id} />
           </div>
         </div>
 

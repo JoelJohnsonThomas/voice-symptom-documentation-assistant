@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AppLayout } from "./components/layout/AppLayout";
 import { Spinner } from "./components/ui/Spinner";
+import { PwaUpdatePrompt } from "./components/ui/PwaUpdatePrompt";
 
 // Lazy-loaded pages
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
@@ -13,6 +14,7 @@ const AmbientModePage = lazy(() => import("./pages/AmbientModePage"));
 const MonitoringPage = lazy(() => import("./pages/MonitoringPage"));
 const HIPAAPage = lazy(() => import("./pages/HIPAAPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const OfflineFallbackPage = lazy(() => import("./pages/OfflineFallbackPage"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -47,9 +49,11 @@ export default function App() {
               <Route path="monitoring" element={<MonitoringPage />} />
               <Route path="hipaa" element={<HIPAAPage />} />
               <Route path="settings" element={<SettingsPage />} />
+              <Route path="offline" element={<OfflineFallbackPage />} />
             </Route>
           </Routes>
         </Suspense>
+        <PwaUpdatePrompt />
       </BrowserRouter>
     </QueryClientProvider>
   );

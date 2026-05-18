@@ -214,6 +214,24 @@ MODEL_READY = Gauge(
     label_names=("model",),
 )
 
+# Clinician SOAP review workflow metrics
+SOAP_VERSION_COUNT = Counter(
+    "soap_versions_total",
+    "Total SOAP note versions created",
+    label_names=("change_type",),
+)
+
+SOAP_APPROVAL_COUNT = Counter(
+    "soap_approvals_total",
+    "Total SOAP note approvals issued by clinicians",
+)
+
+SOAP_ANNOTATION_COUNT = Counter(
+    "soap_annotations_total",
+    "Total SOAP annotations created (correction, addition, question, approval, flag)",
+    label_names=("annotation_type",),
+)
+
 # RAG metrics
 RAG_RETRIEVAL_LATENCY = Histogram(
     "rag_retrieval_duration_seconds",

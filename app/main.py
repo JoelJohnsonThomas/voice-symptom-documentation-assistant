@@ -98,6 +98,7 @@ from app.data_retention import (
 from app.auth import SYSTEM_USER, UserRole, require_roles, ALL_ROLES, INTAKE_AND_UP_ROLES, get_current_user
 from app.routes.auth_routes import router as auth_router
 from app.routes.oidc_routes import router as oidc_router
+from app.routes.soap_review import router as soap_review_router
 from app.models.medasr_service import get_medasr_service
 from app.models.medgemma_service import get_medgemma_service
 from app.models.ner_service import get_ner_service
@@ -143,6 +144,8 @@ app.include_router(auth_router)
 # OIDC/SSO routes (Phase 1 enhancement)
 if settings.oidc_enabled:
     app.include_router(oidc_router)
+# Clinician SOAP review workflow (versions, annotations, approval)
+app.include_router(soap_review_router)
 
 
 # Security headers middleware (Phase 4)

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+    <!-- Gradient definition -->
+    <defs>
+        <linearGradient id="primaryGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#7c3aed" />
+            <stop offset="100%" stop-color="#4f46e5" />
+        </linearGradient>
+    </defs>
+
+    <!-- Background -->
+    <rect width="512" height="512" rx="128" fill="#0f111a" />
+    
+    <!-- Outer Mic Shape (white) -->
+    <path fill="none" stroke="#ffffff" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"
+        d="M256 120a64 64 0 0 0-64 64v144a64 64 0 0 0 128 0V184a64 64 0 0 0-64-64z" />
+    
+    <!-- Sound Waves Base (gradient) -->
+    <path fill="none" stroke="url(#primaryGrad)" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"
+        d="M144 260v20a112 112 0 0 0 224 0v-20M256 392v64M180 456h152" />
+        
+    <!-- Medical Cross inside Mic -->
+    <path fill="#06b6d4" stroke="#06b6d4" stroke-width="20" stroke-linejoin="round"
+        d="M236 216v-30h40v30h30v40h-30v30h-40v-30h-30v-40h30z" />
+</svg>

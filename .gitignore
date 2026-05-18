@@ -69,3 +69,5 @@ frontend/design-preview.html
 frontend/node_modules
 UI_screenshot.png
 uiscreen.png
+node_modules/
+node_modules

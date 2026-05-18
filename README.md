@@ -75,7 +75,7 @@ The frontend is a fully-featured React 19 application with the **Clinical Glass*
 | **Observability** | Prometheus-compatible metrics, structured JSON logging with correlation IDs |
 | **Rate Limiting** | Sliding-window rate limiter + async inference queue with configurable concurrency |
 | **Clinical Glass UI** | React 19 frontend — 87 components, 6 themes, glassmorphism design, WCAG 2.1 AA |
-| **PWA** | Installable progressive web app with offline support and background sync |
+| **PWA** | Installable progressive web app (vite-plugin-pwa + Workbox). App shell + static assets are precached; `/api` and `/ws` are NetworkOnly so PHI never lands on disk. Includes `/offline.html` navigation fallback and `PwaUpdatePrompt` toast for new SW versions. |
 
 ---
 
@@ -171,20 +171,21 @@ voice-symptom-documentation-assistant/
 ├── frontend/                      # React 19 Clinical Glass UI
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── ui/                # 11 primitive components (GlassCard, Badge, Modal…)
+│   │   │   ├── ui/                # 20 primitives (GlassCard, Modal, Drawer, EmptyState, Pagination, Skeleton, Tooltip, Tabs, DateRangePicker, PwaUpdatePrompt…)
 │   │   │   ├── layout/            # AppLayout, Sidebar, Header, UserCard
 │   │   │   ├── voice/             # VoiceCard, RecordButton, WaveformVisualizer…
-│   │   │   ├── soap/              # SOAPSectionCard, EHRPushModal, NEREntities…
+│   │   │   ├── soap/              # SOAPSectionCard, EHRPushModal, NEREntities, AnnotationDrawer, ApprovalButton, VersionDiffView, AnnotationItem…
 │   │   │   ├── conversation/      # ConversationPanel, ChatBubble, EntitySidebar…
-│   │   │   ├── dashboard/         # StatCard, SystemHealthGrid
-│   │   │   ├── monitoring/        # ModelStatusCard, QueueCard, AlertsList
+│   │   │   ├── dashboard/         # StatCard, SystemHealthGrid, KpiTile, TrendSparkline, RecentSessionRow
+│   │   │   ├── monitoring/        # ModelStatusCard, QueueCard, AlertsList, MetricTile, ThresholdGauge, TimeRangeSelector
 │   │   │   ├── settings/          # ThemeSelector, AudioSettings, ModelSettings…
-│   │   │   ├── session/           # SessionCard
+│   │   │   ├── session/           # SessionCard, TranscriptLine, EntityChipGroup, SessionFilterBar
 │   │   │   └── auth/              # LoginOverlay, ConsentDialog, SessionTimeout
-│   │   ├── pages/                 # 8 route-level pages (lazy-loaded)
-│   │   ├── hooks/                 # 9 custom hooks (audio, WebSocket, auth, PWA…)
+│   │   ├── pages/                 # 11 route-level pages (lazy-loaded, includes OfflineFallbackPage)
+│   │   ├── hooks/                 # 11 custom hooks (audio, WebSocket, auth, PWA, SOAP review…)
+│   │   ├── pwa/                   # Service worker bootstrap (Workbox via vite-plugin-pwa)
 │   │   ├── stores/                # 5 Zustand stores (theme, auth, session…)
-│   │   ├── types/                 # TypeScript types (api, soap, conversation, theme)
+│   │   ├── types/                 # TypeScript types (api, soap, soapReview, conversation, theme)
 │   │   └── styles/
 │   │       └── globals.css        # Clinical Glass CSS variables + 6 theme variants
 │   ├── vite.config.ts             # Vite config with /api + /ws proxy to :8000
@@ -498,13 +499,13 @@ VoxDoc is designed with healthcare data sensitivity in mind:
 - **MedGemma terms gating** — inference is blocked until `MEDGEMMA_TERMS_ACKNOWLEDGED=true` is explicitly set, ensuring organizational review of [Google's MedGemma terms](https://ai.google.dev/gemma/terms).
 - **Compliance notices** — all AI-generated responses include explicit non-diagnostic disclaimers.
 - **Field-level confidence scoring** — each extracted SOAP field carries a calibrated confidence score with a green/yellow/red verification band to guide clinician review.
-- **Clinician SOAP approval workflow** — the React UI requires explicit Approve / Reject per SOAP section with full edit history before any export or EHR push.
+- **Clinician SOAP approval workflow** — the React UI requires explicit Approve / Reject per SOAP section with full edit history before any export or EHR push. Backed by `app/routes/soap_review.py`, which exposes versioning + annotation + approval endpoints over the `DocumentVersion` and `DocumentAnnotation` tables and emits audit logs with `phi_accessed=true` plus Prometheus counters (`soap_versions_total`, `soap_approvals_total`, `soap_annotations_total`).
 
 ---
 
 ## Known Limitations
 
-- `app/static/manifest.json` references `icon-192x192.png` and `icon-512x512.png`; the repository currently includes only `app/static/icon.svg`. PWA installation icons require generation.
+- The React PWA manifest declares SVG icons via `vite-plugin-pwa`; install-prompt criteria on some Chromium versions also expect 192/512 PNGs. For broadest install support, generate raster PNGs from `frontend/public/icons/icon.svg` and add them to the manifest icons list in `vite.config.ts`. The legacy `app/static/manifest.json` (vanilla UI) still references the missing PNGs.
 - First startup may take several minutes while model weights are downloaded and cached.
 - `google/medasr` access requires explicit Hugging Face model approval — join the waitlist if access is pending.
 - Real-time WebSocket streaming is tuned for `STREAMING_INTERVAL_SECONDS=2.0` on GPU; CPU environments may need `4.0` or higher for stable throughput.
