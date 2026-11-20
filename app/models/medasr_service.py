@@ -17,6 +17,14 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Patch torch.is_autocast_enabled for PyTorch <2.4 compatibility with newer Whisper.
+# Whisper calls torch.is_autocast_enabled('cuda') but PyTorch 2.2 takes no arguments.
+_orig_is_autocast_enabled = torch.is_autocast_enabled
+try:
+    _orig_is_autocast_enabled("cuda")
+except TypeError:
+    torch.is_autocast_enabled = lambda *args, **kwargs: _orig_is_autocast_enabled()
+
 
 class MedASRService:
     """Service for medical speech-to-text using MedASR."""

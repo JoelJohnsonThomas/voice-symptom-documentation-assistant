@@ -28,6 +28,13 @@ from app.models.medgemma_service import MedGemmaService
 
 logger = logging.getLogger(__name__)
 
+SUPPORTED_PROVIDERS = {
+    "auto", "black-forest-labs", "cerebras", "clarifai", "cohere",
+    "fal-ai", "featherless-ai", "fireworks-ai", "groq", "hf-inference",
+    "hyperbolic", "nebius", "novita", "nscale", "openai", "publicai",
+    "replicate", "sambanova", "scaleway", "together", "zai-org",
+}
+
 
 class HFInferenceMedGemmaService(MedGemmaService):
     """MedGemma service backed by HF Inference Providers."""
@@ -48,7 +55,15 @@ class HFInferenceMedGemmaService(MedGemmaService):
         self.vision_model = None
         self.vision_processor = None
 
-        provider = settings.hf_inference_provider or "auto"
+        raw_provider = (settings.hf_inference_provider or "").strip()
+        if raw_provider and raw_provider not in SUPPORTED_PROVIDERS:
+            logger.warning(
+                "HF_INFERENCE_PROVIDER='%s' is not supported — falling back to 'auto'. "
+                "Supported: %s", raw_provider, ", ".join(sorted(SUPPORTED_PROVIDERS))
+            )
+            raw_provider = ""
+        provider = raw_provider or "auto"
+
         self._model_id = settings.medgemma_model
         self.client = InferenceClient(
             model=self._model_id,
@@ -75,12 +90,19 @@ class HFInferenceMedGemmaService(MedGemmaService):
 
     def _chat(self, prompt_content: str, max_new_tokens: int = 512) -> str:
         """Single-turn chat completion via the configured provider."""
-        response = self.client.chat_completion(
-            messages=[{"role": "user", "content": prompt_content}],
-            max_tokens=max_new_tokens,
-            temperature=0.0,
-        )
-        return response.choices[0].message.content or ""
+        try:
+            response = self.client.chat_completion(
+                messages=[{"role": "user", "content": prompt_content}],
+                max_tokens=max_new_tokens,
+                temperature=0.0,
+            )
+            return response.choices[0].message.content or ""
+        except StopIteration:
+            raise RuntimeError(
+                f"No HF Inference Provider currently serves {self._model_id}. "
+                "Deploy with MEDGEMMA_PROVIDER=local on a GPU instance, or use "
+                "the Colab notebook with a free T4 GPU."
+            )
 
     def generate_documentation(
         self,
@@ -229,6 +251,8 @@ class HFInferenceMedGemmaService(MedGemmaService):
                 content = getattr(delta, "content", None)
                 if content:
                     yield content
+        except StopIteration:
+            yield f"Error: No HF Inference Provider currently serves {self._model_id}. Use Colab with GPU instead."
         except Exception as e:
             logger.error(f"Remote streaming generation failed: {e}")
             yield f"Error: {e}"

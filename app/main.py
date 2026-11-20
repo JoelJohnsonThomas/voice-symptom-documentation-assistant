@@ -29,6 +29,7 @@ import tempfile
 import logging
 import asyncio
 import json
+import shutil
 import subprocess
 import io
 import time
@@ -946,9 +947,10 @@ def decode_webm_chunk(webm_bytes: bytes, sample_rate: int = 16000) -> Optional[n
         Float32 numpy array of audio samples, or None on failure
     """
     try:
+        ffmpeg_bin = shutil.which('ffmpeg') or '/opt/homebrew/bin/ffmpeg'
         process = subprocess.run(
             [
-                'ffmpeg', '-y',
+                ffmpeg_bin, '-y',
                 '-i', 'pipe:0',           # Read from stdin
                 '-f', 'f32le',            # Output raw float32 little-endian
                 '-acodec', 'pcm_f32le',

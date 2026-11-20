@@ -5,6 +5,7 @@ Handles audio file upload, validation, and preprocessing.
 """
 
 import io
+import os
 import librosa
 import soundfile as sf
 import numpy as np
@@ -60,8 +61,8 @@ class AudioHandler:
             Path to converted WAV file
         """
         # Check if ffmpeg is available
-        ffmpeg_path = shutil.which('ffmpeg')
-        if not ffmpeg_path:
+        ffmpeg_path = shutil.which('ffmpeg') or '/opt/homebrew/bin/ffmpeg'
+        if not os.path.isfile(ffmpeg_path):
             raise RuntimeError("FFmpeg not found. Please install FFmpeg for WebM support.")
         
         # Create temp WAV file
@@ -73,7 +74,7 @@ class AudioHandler:
         
         try:
             result = subprocess.run([
-                'ffmpeg', '-y', '-i', input_path,
+                ffmpeg_path, '-y', '-i', input_path,
                 '-acodec', 'pcm_s16le',
                 '-ar', str(settings.audio_sample_rate),
                 '-ac', '1',  # Mono

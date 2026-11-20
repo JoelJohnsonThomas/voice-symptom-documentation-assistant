@@ -5,13 +5,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="VoxDoc - AI-Powered Voice Symptom Intake & Documentation Assistant">
-    <meta name="theme-color" content="#0f111a">
+    <meta name="theme-color" content="#0B1017">
     <title>VoxDoc | Voice Symptom Intake</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=5">
+    <link rel="stylesheet" href="/static/css/style.css?v=6">
     <link rel="stylesheet" href="/static/css/conversation.css?v=1">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <!-- HTML2PDF for Print-Ready Reports -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"
             integrity="sha512-GsLlZN/3F2ErC5ifS5QtgpiJtWd43JWSuIgh7mbzZ8zBps+dvLusV+eNQATqgA/HdeKFVgA5v3S/cIrLF7QnIg=="
@@ -32,11 +32,18 @@
             <div class="sidebar-header">
                 <div class="logo">
                     <div class="logo-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                        <svg width="30" height="30" viewBox="0 0 32 32" role="img" aria-label="VoxDoc">
+                            <rect x="0" y="0" width="32" height="32" rx="8" fill="var(--violet-500)"/>
+                            <g stroke="var(--bg-primary)" stroke-width="2.4" stroke-linecap="round" fill="none">
+                                <path d="M7 14v4"/><path d="M11 10.5v11"/><path d="M15 12.5v7"/>
+                                <path d="M19 11.5h6"/><path d="M19 16h6"/><path d="M19 20.5h4"/>
+                            </g>
                         </svg>
                     </div>
-                    <span class="logo-text">VoxDoc</span>
+                    <div>
+                        <span class="logo-text">VoxDoc</span>
+                        <div class="logo-subtitle">Clinical Documentation</div>
+                    </div>
                 </div>
                 <button id="closeSidebar" class="close-sidebar-btn" aria-label="Close sidebar menu">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -47,7 +54,7 @@
             </div>
 
             <nav class="sidebar-nav">
-                <p class="nav-label">Menu</p>
+                <p class="nav-label">Primary</p>
                 <button class="nav-item active" data-tab="dashboard">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="3" y="3" width="7" height="9" />
@@ -63,8 +70,10 @@
                         <circle cx="12" cy="12" r="10" />
                         <polyline points="12 6 12 12 16 14" />
                     </svg>
-                    <span>History</span>
+                    <span>Session History</span>
                 </button>
+
+                <p class="nav-label" style="margin-top: 1.5rem;">Operations</p>
                 <button class="nav-item" data-tab="monitoring">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
@@ -75,8 +84,10 @@
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                     </svg>
-                    <span>HIPAA</span>
+                    <span>HIPAA Compliance</span>
                 </button>
+
+                <p class="nav-label" style="margin-top: 1.5rem;">Administration</p>
                 <button class="nav-item" data-tab="settings">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="3" />
@@ -120,6 +131,10 @@
             </nav>
 
             <div class="sidebar-footer">
+                <div class="service-health" style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:12px;font-size:0.75rem;color:var(--text-muted);">
+                    <span style="width:8px;height:8px;border-radius:50%;background:var(--emerald-500);flex-shrink:0;"></span>
+                    <span>All services operational</span>
+                </div>
                 <div class="action-card" id="batchExportBtn" role="button" tabindex="0"
                     aria-label="Batch Export All (PDF)"
                     style="padding: 12px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
@@ -138,7 +153,7 @@
                         <div class="user-plan" id="userRole">Admin</div>
                     </div>
                 </div>
-                <button id="logoutBtn" class="hidden" style="width:100%;margin-top:8px;padding:8px 12px;background:var(--bg-tertiary);color:var(--text-secondary);border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:0.85rem;">Sign Out</button>
+                <button id="logoutBtn" class="hidden" style="width:100%;margin-top:8px;padding:8px 12px;background:var(--bg-tertiary,#202D3B);color:var(--text-secondary);border:1px solid var(--border-color);border-radius:8px;cursor:pointer;font-size:0.85rem;">Sign Out</button>
             </div>
         </aside>
 
@@ -1322,34 +1337,19 @@
                 </div>
 
                 <div class="settings-grid">
-                    <!-- Theme Matrix -->
+                    <!-- Theme -->
                     <div class="settings-card full-width">
-                        <h3>Holo-Theme Matrix</h3>
+                        <h3>Appearance</h3>
                         <div class="theme-options">
-                            <div class="theme-card active" data-theme="glass" role="button" tabindex="0"
-                                aria-label="Select Clinical Glass Theme">
-                                <div class="theme-preview glass"></div>
-                                <span>Clinical Glass</span>
-                            </div>
-                            <div class="theme-card" data-theme="neon" role="button" tabindex="0"
-                                aria-label="Select Neon Cyber Theme">
-                                <div class="theme-preview neon"></div>
-                                <span>Neon Cyber</span>
-                            </div>
-                            <div class="theme-card" data-theme="midnight" role="button" tabindex="0"
-                                aria-label="Select Midnight Void Theme">
-                                <div class="theme-preview midnight"></div>
-                                <span>Midnight Void</span>
+                            <div class="theme-card active" data-theme="dark" role="button" tabindex="0"
+                                aria-label="Select Dark Theme">
+                                <div class="theme-preview" style="background: linear-gradient(135deg, #0B1017, #182330);"></div>
+                                <span>Dark</span>
                             </div>
                             <div class="theme-card" data-theme="light" role="button" tabindex="0"
-                                aria-label="Select Clinical Light Theme">
-                                <div class="theme-preview light"></div>
-                                <span>Clinical Light</span>
-                            </div>
-                            <div class="theme-card" data-theme="aurora" role="button" tabindex="0"
-                                aria-label="Select Aurora Dusk Theme">
-                                <div class="theme-preview aurora"></div>
-                                <span>Aurora Dusk</span>
+                                aria-label="Select Light Theme">
+                                <div class="theme-preview" style="background: linear-gradient(135deg, #F4F7FA, #FFFFFF);"></div>
+                                <span>Light</span>
                             </div>
                             <div class="theme-card" data-theme="high-contrast" role="button" tabindex="0"
                                 aria-label="Select High Contrast Theme">

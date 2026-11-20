@@ -871,15 +871,12 @@ function hideLiveTranscript() {
 // =====================================================
 
 // Theme cycle order for header toggle
-const THEME_ORDER = ['glass', 'light', 'neon', 'midnight', 'aurora', 'high-contrast'];
+const THEME_ORDER = ['dark', 'light', 'high-contrast'];
 
 // Meta theme-color mapping per theme
 const THEME_META_COLORS = {
-    glass: '#0f111a',
-    neon: '#050505',
-    midnight: '#000000',
-    light: '#f0f4f8',
-    aurora: '#141020',
+    dark: '#0B1017',
+    light: '#F4F7FA',
     'high-contrast': '#000000'
 };
 
@@ -887,14 +884,17 @@ function setupSettings() {
     // Theme Switching
     const themeCards = document.querySelectorAll('.theme-card');
 
-    // Determine initial theme: saved > OS preference > default (glass)
+    // Determine initial theme: saved > OS preference > default (dark)
     let initialTheme = localStorage.getItem('voxdoc_theme');
+    // Migrate old theme names to new system
+    if (initialTheme && !THEME_ORDER.includes(initialTheme)) {
+        initialTheme = initialTheme === 'light' ? 'light' : 'dark';
+    }
     if (!initialTheme) {
-        // First visit — detect OS preference
         if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
             initialTheme = 'light';
         } else {
-            initialTheme = 'glass';
+            initialTheme = 'dark';
         }
     }
     applyTheme(initialTheme);
@@ -902,10 +902,9 @@ function setupSettings() {
     // Listen for OS theme changes (live)
     if (window.matchMedia) {
         window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', (e) => {
-            // Only auto-switch if user hasn't explicitly picked a theme
             const userPicked = localStorage.getItem('voxdoc_theme');
             if (!userPicked) {
-                applyTheme(e.matches ? 'light' : 'glass');
+                applyTheme(e.matches ? 'light' : 'dark');
             }
         });
     }
@@ -942,18 +941,18 @@ function setupSettings() {
 function applyTheme(theme) {
     // Remove all theme classes
     THEME_ORDER.forEach(t => {
-        if (t !== 'glass') document.body.classList.remove(`theme-${t}`);
+        if (t !== 'dark') document.body.classList.remove(`theme-${t}`);
     });
 
-    // Apply new theme class (glass = no class, uses :root defaults)
-    if (theme !== 'glass') {
+    // Apply new theme class (dark = no class, uses :root defaults)
+    if (theme !== 'dark') {
         document.body.classList.add(`theme-${theme}`);
     }
 
     // Update <meta name="theme-color">
     const metaTheme = document.querySelector('meta[name="theme-color"]');
     if (metaTheme) {
-        metaTheme.setAttribute('content', THEME_META_COLORS[theme] || '#0f111a');
+        metaTheme.setAttribute('content', THEME_META_COLORS[theme] || '#0B1017');
     }
 
     // Update settings panel theme cards active state
@@ -970,7 +969,7 @@ function setupThemeToggle() {
     if (!toggleBtn) return;
 
     toggleBtn.addEventListener('click', () => {
-        const current = window._currentTheme || 'glass';
+        const current = window._currentTheme || 'dark';
         const currentIndex = THEME_ORDER.indexOf(current);
         const nextIndex = (currentIndex + 1) % THEME_ORDER.length;
         const nextTheme = THEME_ORDER[nextIndex];
