@@ -341,6 +341,11 @@ async def health_check():
         return {
             "status": "healthy",
             "medasr_ready": medasr.is_ready(),
+            # Which ASR backend actually loaded (MedASR may fall back to Whisper-only).
+            "asr_backends": {
+                "medasr": getattr(medasr, "pipe", None) is not None,
+                "whisper": getattr(medasr, "whisper_model", None) is not None,
+            },
             "medgemma_ready": medgemma_ready,
             "ner_ready": get_ner_service().is_ready,
             "vision_ready": vision_ready,

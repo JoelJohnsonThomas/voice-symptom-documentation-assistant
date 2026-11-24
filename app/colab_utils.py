@@ -42,7 +42,7 @@ def detect_gpu_runtime() -> Dict[str, Any]:
 
     if torch.cuda.is_available():
         props = torch.cuda.get_device_properties(0)
-        total_gb = props.total_mem / (1024 ** 3)
+        total_gb = props.total_memory / (1024 ** 3)
         free_gb = torch.cuda.mem_get_info(0)[0] / (1024 ** 3)
 
         info["gpu_name"] = props.name
@@ -67,7 +67,9 @@ def setup_colab_environment() -> Dict[str, str]:
     if not settings.colab_mode:
         return changes
 
-    # Use /content for model cache (Colab persistent storage)
+    # Use /content for the model cache. It is fast local disk but is wiped when
+    # the runtime is recycled; only Google Drive persists. setdefault keeps an
+    # HF_HOME the notebook already pointed at Drive (Step 4).
     if os.path.isdir("/content"):
         model_dir = "/content/models"
         os.makedirs(model_dir, exist_ok=True)

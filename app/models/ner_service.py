@@ -178,13 +178,20 @@ class MedicalNERService:
         self.is_ready = self.nlp_bc5cdr is not None or self.nlp_core is not None
 
     def _load_models(self):
-        """Load SciSpaCy models."""
+        """Load SciSpaCy models.
+
+        NER is optional: any load failure (missing package, or a model built
+        for an older spaCy whose config no longer validates) leaves that model
+        as None so the service still constructs and callers degrade gracefully.
+        """
         try:
             logger.info("Attempting to load SciSpaCy en_ner_bc5cdr_md...")
             self.nlp_bc5cdr = spacy.load("en_ner_bc5cdr_md")
             logger.info("en_ner_bc5cdr_md loaded successfully")
         except OSError:
             logger.warning("en_ner_bc5cdr_md not found. NER capabilities will be limited.")
+        except Exception as e:
+            logger.warning("en_ner_bc5cdr_md failed to load (%s). NER capabilities will be limited.", e)
 
         try:
             logger.info("Attempting to load SciSpaCy en_core_sci_sm...")
@@ -192,6 +199,8 @@ class MedicalNERService:
             logger.info("en_core_sci_sm loaded successfully")
         except OSError:
             logger.warning("en_core_sci_sm not found.")
+        except Exception as e:
+            logger.warning("en_core_sci_sm failed to load (%s).", e)
 
     def _resolve_code(
         self, entity_text: str, category: str
